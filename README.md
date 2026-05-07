@@ -145,6 +145,28 @@ The intentionally scoped version of Imprint includes:
 - opening the most relevant browser pages
 - creating a first draft document for a selected assignment
 
+## Current Build Status
+
+The current implementation now includes:
+
+- summonable desktop shell UI
+- Google OAuth sign-in from local env configuration
+- live reads from Gmail, Google Classroom, and Google Calendar
+- a Workspace snapshot dashboard for recent email, coursework, and events
+- a Gemini-powered query box that answers against the connected Workspace context
+
+The current Gemini assistant call uses:
+
+- `gemini-3-flash-preview`
+
+Still intentionally pending:
+
+- onboarding flow
+- `user.md` generation
+- local context graph
+- browser control actions on top of the Workspace data
+- reminders and personalized ranking logic
+
 What it intentionally leaves out:
 
 - generic desktop automation

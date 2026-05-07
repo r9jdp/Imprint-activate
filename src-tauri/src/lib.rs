@@ -20,6 +20,12 @@ struct GoogleConnectionStatus {
 }
 
 #[derive(serde::Deserialize)]
+struct WorkspaceAssistantRequest {
+    query: String,
+    snapshot: google::WorkspaceSnapshot,
+}
+
+#[derive(serde::Deserialize)]
 struct GcpServiceAccountKey {
     client_email: String,
     private_key: String,
@@ -359,6 +365,86 @@ async fn get_workspace_snapshot() -> Result<google::WorkspaceSnapshot, String> {
     google::snapshot().await
 }
 
+#[tauri::command]
+async fn ask_workspace_assistant(
+    request: WorkspaceAssistantRequest,
+) -> Result<String, String> {
+    let api_key = env!("GEMINI_API_KEY");
+    if api_key.trim().is_empty() {
+        return Err("GEMINI_API_KEY is missing. Add it to src-tauri/.env and rebuild the app.".to_string());
+    }
+
+    if request.query.trim().is_empty() {
+        return Err("Query cannot be empty.".to_string());
+    }
+
+    let url = format!(
+        "https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key={}",
+        api_key
+    );
+
+    let snapshot_json = serde_json::to_string_pretty(&request.snapshot)
+        .map_err(|e| format!("Failed to serialize workspace snapshot: {}", e))?;
+
+    let prompt = format!(
+        "You are Imprint, a stateful student assistant.\n\
+         Use the connected Gmail, Google Classroom, and Calendar context to answer the user's request.\n\
+         Prioritize clarity, actionability, and urgency.\n\
+         If asked what to focus on, rank tasks by urgency and student impact.\n\
+         If asked to draft or summarize, ground the response in the workspace data only.\n\
+         Keep the answer concise and structured.\n\n\
+         Workspace snapshot:\n{}\n\n\
+         User query:\n{}",
+        snapshot_json,
+        request.query.trim()
+    );
+
+    let client = reqwest::Client::new();
+    let response = client
+        .post(url)
+        .json(&serde_json::json!({
+            "contents": [{
+                "role": "user",
+                "parts": [{ "text": prompt }]
+            }],
+            "generationConfig": {
+                "temperature": 0.3
+            }
+        }))
+        .send()
+        .await
+        .map_err(|e| format!("Gemini request failed: {}", e))?;
+
+    let status = response.status();
+    let payload: serde_json::Value = response
+        .json()
+        .await
+        .map_err(|e| format!("Failed to parse Gemini response: {}", e))?;
+
+    if !status.is_success() {
+        let msg = payload["error"]["message"]
+            .as_str()
+            .unwrap_or("Gemini returned an error");
+        return Err(format!("Gemini error ({}): {}", status, msg));
+    }
+
+    let text = payload["candidates"][0]["content"]["parts"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|part| part["text"].as_str())
+        .collect::<Vec<_>>()
+        .join("\n")
+        .trim()
+        .to_string();
+
+    if text.is_empty() {
+        return Err("Gemini returned an empty response.".to_string());
+    }
+
+    Ok(text)
+}
+
 use tauri::Manager;
 use tauri_plugin_global_shortcut::{Code, Modifiers, ShortcutState};
 
@@ -442,6 +528,7 @@ pub fn run() {
                 sign_in_google,
                 disconnect_google,
                 get_workspace_snapshot,
+                ask_workspace_assistant,
                 get_scope_config,
                 set_scope_config,
                 get_undo_stack,

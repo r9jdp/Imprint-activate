@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { AnimatePresence, motion } from 'framer-motion'
+import Markdown from 'react-markdown'
 import {
   ArrowClockwise,
   CalendarDots,
@@ -12,6 +13,7 @@ import {
   SignOut,
   Sparkle,
 } from '@phosphor-icons/react'
+import remarkGfm from 'remark-gfm'
 import { useColors, useThemeStore } from './theme'
 
 type GoogleConnectionStatus = {
@@ -64,9 +66,11 @@ export default function App() {
   const setThemeMode = useThemeStore((s) => s.setThemeMode)
   const [status, setStatus] = useState<GoogleConnectionStatus>({ configured: false, connected: false })
   const [snapshot, setSnapshot] = useState<WorkspaceSnapshot | null>(null)
-  const [busy, setBusy] = useState<'idle' | 'signing-in' | 'refreshing' | 'disconnecting'>('idle')
+  const [busy, setBusy] = useState<'idle' | 'signing-in' | 'refreshing' | 'disconnecting' | 'asking'>('idle')
   const [feedback, setFeedback] = useState('')
   const [error, setError] = useState('')
+  const [query, setQuery] = useState('')
+  const [assistantAnswer, setAssistantAnswer] = useState('')
 
   useEffect(() => {
     setThemeMode('dark')
@@ -104,6 +108,7 @@ export default function App() {
 
   async function refreshSnapshot() {
     setBusy('refreshing')
+    setFeedback('')
     setError('')
     try {
       const data = await invoke<WorkspaceSnapshot>('get_workspace_snapshot')
@@ -124,6 +129,24 @@ export default function App() {
       setStatus((prev) => ({ ...prev, connected: false }))
       setSnapshot(null)
       setFeedback('Disconnected Google account and cleared local tokens.')
+    } catch (e) {
+      setError(normalizeError(e))
+    } finally {
+      setBusy('idle')
+    }
+  }
+
+  async function askAssistant() {
+    if (!snapshot || !query.trim()) return
+    setBusy('asking')
+    setFeedback('')
+    setError('')
+    setAssistantAnswer('')
+    try {
+      const answer = await invoke<string>('ask_workspace_assistant', {
+        request: { query: query.trim(), snapshot },
+      })
+      setAssistantAnswer(answer.trim() || 'Gemini returned no usable text for this query.')
     } catch (e) {
       setError(normalizeError(e))
     } finally {
@@ -192,12 +215,7 @@ export default function App() {
               title="Google Sign-In"
               action={<StatusPill configured={status.configured} connected={status.connected} />}
             >
-              <div className="space-y-3">
-                <div className="rounded-xl px-3 py-3 text-[12px] leading-6" style={{ background: colors.containerBg }}>
-                  {status.configured
-                    ? 'Google OAuth is configured from your local env file. Signing in will open Google consent for Gmail, Classroom, and Calendar.'
-                    : 'Add GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET to src-tauri/.env, restart the app, and the sign-in button will become active.'}
-                </div>
+              <div>
                 <button
                   onClick={signIn}
                   disabled={!status.configured || busy !== 'idle'}
@@ -287,18 +305,18 @@ export default function App() {
             <AnimatePresence mode="wait">
               {(feedback || error) && (
                 <motion.div
-                  key={feedback ? 'feedback' : 'error'}
+                  key={error ? 'error' : 'feedback'}
                   initial={{ opacity: 0, y: -8 }}
                   animate={{ opacity: 1, y: 0 }}
                   exit={{ opacity: 0, y: -6 }}
                   className="rounded-2xl px-4 py-3 mb-5 text-[13px] shrink-0"
                   style={{
-                    background: feedback ? colors.statusCompleteBg : colors.statusErrorBg,
-                    color: feedback ? colors.statusComplete : colors.statusError,
-                    border: `1px solid ${feedback ? colors.statusComplete : colors.statusError}22`,
+                    background: error ? colors.statusErrorBg : colors.statusCompleteBg,
+                    color: error ? colors.statusError : colors.statusComplete,
+                    border: `1px solid ${error ? colors.statusError : colors.statusComplete}22`,
                   }}
                 >
-                  {feedback || error}
+                  {error || feedback}
                 </motion.div>
               )}
             </AnimatePresence>
@@ -383,14 +401,61 @@ export default function App() {
               >
                 <Sparkle size={18} weight="fill" />
               </div>
-              <div>
+              <div className="flex-1 min-w-0">
                 <div className="text-[13px] font-medium" style={{ color: colors.textPrimary }}>
-                  This pass is the data foundation
+                  Ask Imprint
                 </div>
-                <div className="text-[12px] mt-1 leading-6" style={{ color: colors.textSecondary }}>
-                  You now have the summonable desktop UI and the Google data layer in one place. The next layers are
-                  student onboarding (`user.md` / profile graph), browser control, and eventually stateful ranking and
-                  reminders driven by recent email and pending coursework.
+                <div className="text-[12px] mt-1 mb-3 leading-6" style={{ color: colors.textSecondary }}>
+                  Query Gemini over the connected Gmail, Classroom, and Calendar context.
+                </div>
+                <div className="flex items-center gap-3">
+                  <input
+                    value={query}
+                    onChange={(e) => setQuery(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' && !e.shiftKey) {
+                        e.preventDefault()
+                        void askAssistant()
+                      }
+                    }}
+                    placeholder="What should I focus on right now?"
+                    className="flex-1 h-12 px-4 rounded-xl text-[13px]"
+                    style={{
+                      background: colors.containerBg,
+                      color: colors.textPrimary,
+                      border: `1px solid ${colors.containerBorder}`,
+                    }}
+                  />
+                  <button
+                    onClick={() => void askAssistant()}
+                    disabled={!snapshot || !query.trim() || busy !== 'idle'}
+                    className="h-12 px-4 rounded-xl text-[13px] font-medium"
+                    style={{
+                      background: colors.accent,
+                      color: colors.textOnAccent,
+                      opacity: !snapshot || !query.trim() || busy !== 'idle' ? 0.6 : 1,
+                    }}
+                  >
+                    {busy === 'asking' ? 'Asking...' : 'Ask'}
+                  </button>
+                </div>
+                <div
+                  className="mt-3 rounded-xl px-4 py-3 max-h-[160px] overflow-y-auto text-[12px] leading-6"
+                  style={{
+                    background: colors.containerBg,
+                    color: assistantAnswer || busy === 'asking' ? colors.textPrimary : colors.textTertiary,
+                    border: `1px solid ${colors.containerBorder}`,
+                  }}
+                >
+                  {busy === 'asking'
+                    ? 'Thinking through your Gmail, Classroom, and Calendar context...'
+                    : assistantAnswer ? (
+                      <div className="prose-cloud conversation-selectable text-[12px] leading-6 [&>*:first-child]:mt-0 [&>*:last-child]:mb-0">
+                        <Markdown remarkPlugins={[remarkGfm]}>
+                          {assistantAnswer}
+                        </Markdown>
+                      </div>
+                    ) : 'No response yet. Try asking what you should focus on, what is pending, or which email matters most.'}
                 </div>
               </div>
             </div>

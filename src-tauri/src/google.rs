@@ -397,7 +397,7 @@ async fn fetch_gmail(client: &Client, access_token: &str) -> Result<Vec<GmailMes
     let response = client
         .get("https://gmail.googleapis.com/gmail/v1/users/me/messages")
         .bearer_auth(access_token)
-        .query(&[("labelIds", "INBOX"), ("maxResults", "8")])
+        .query(&[("labelIds", "INBOX"), ("maxResults", "30")])
         .send()
         .await
         .map_err(|e| format!("Failed to load Gmail messages: {}", e))?;
@@ -409,7 +409,7 @@ async fn fetch_gmail(client: &Client, access_token: &str) -> Result<Vec<GmailMes
 
     let ids = payload["messages"].as_array().cloned().unwrap_or_default();
     let mut results = Vec::new();
-    for message in ids.into_iter().take(5) {
+    for message in ids.into_iter().take(30) {
         let Some(id) = message["id"].as_str() else { continue };
         let detail = client
             .get(format!("https://gmail.googleapis.com/gmail/v1/users/me/messages/{}", id))
