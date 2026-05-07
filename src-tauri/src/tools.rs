@@ -194,8 +194,13 @@ pub fn take_screenshot_interactive() -> Result<Option<AttachmentInfo>, String> {
 pub fn open_external_url(url: &str) -> Result<(), String> {
     #[cfg(target_os = "windows")]
     {
-        let status = std::process::Command::new("cmd")
-            .args(["/C", "start", "", url])
+        // Avoid `cmd /C start` here because OAuth URLs contain `&` query
+        // parameters, which cmd treats as command separators and truncates.
+        // Use PowerShell Start-Process so the full URL is passed through safely.
+        let escaped = url.replace('\'', "''");
+        let command = format!("Start-Process '{}'", escaped);
+        let status = std::process::Command::new("powershell")
+            .args(["-NoProfile", "-NonInteractive", "-Command", &command])
             .status()
             .map_err(|e| e.to_string())?;
         if !status.success() {
