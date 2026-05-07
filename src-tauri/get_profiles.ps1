@@ -1,0 +1,1 @@
+$profiles = "Default", "Profile 1", "Profile 2", "Profile 7", "Profile 9"; foreach ($p in $profiles) { $pref = "$env:LOCALAPPDATA\Google\Chrome\User Data\$p\Preferences"; if (Test-Path $pref) { $j = Get-Content $pref -Raw | ConvertFrom-Json; $name = $j.profile.name; $email = ""; try { $email = $j.account_info[0].email } catch {}; Write-Output "$p : Name=$name, Email=$email" } }

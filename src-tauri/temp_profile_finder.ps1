@@ -1,0 +1,1 @@
+ = "C:\Users\Rajdeep\AppData\Local\Google\Chrome\User Data\Local State"; $j = Get-Content -Raw -Path $path | ConvertFrom-Json; foreach ($p in $j.profile.info_cache.psobject.properties) { if ($p.Value.name -match 'somaiya' -or $p.Value.user_name -match 'somaiya') { Write-Output ($p.Name + ' -> ' + $p.Value.name + ' (' + $p.Value.user_name + ')') } }

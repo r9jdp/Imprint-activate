@@ -1,0 +1,1180 @@
+import React, { useRef, useEffect, useState, useMemo, useCallback } from 'react'
+import { motion, AnimatePresence } from 'framer-motion'
+import Markdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
+import {
+  FileText, PencilSimple, FileArrowUp, Terminal, MagnifyingGlass, Globe,
+  Robot, Question, Wrench, FolderOpen, Copy, Check, CaretRight, CaretDown,
+  SpinnerGap, ArrowCounterClockwise, Square, X,
+  // Computer Use icons
+  CursorClick, Keyboard, ArrowsDownUp, MouseSimple, Monitor,
+} from '@phosphor-icons/react'
+import { useSessionStore } from '../stores/sessionStore'
+import { PermissionCard } from './PermissionCard'
+import { PermissionDeniedCard } from './PermissionDeniedCard'
+import { useColors, useThemeStore } from '../theme'
+import type { Message } from '../types'
+
+// ─── Constants ───
+
+const INITIAL_RENDER_CAP = 100
+const PAGE_SIZE = 100
+const REMARK_PLUGINS = [remarkGfm] // Hoisted — prevents re-parse on every render
+
+// ─── Types ───
+
+type GroupedItem =
+  | { kind: 'user'; message: Message }
+  | { kind: 'assistant'; message: Message }
+  | { kind: 'system'; message: Message }
+  | { kind: 'tool-group'; messages: Message[] }
+
+// ─── Helpers ───
+
+function groupMessages(messages: Message[]): GroupedItem[] {
+  const result: GroupedItem[] = []
+  let toolBuf: Message[] = []
+
+  const flushTools = () => {
+    if (toolBuf.length > 0) {
+      result.push({ kind: 'tool-group', messages: [...toolBuf] })
+      toolBuf = []
+    }
+  }
+
+  for (const msg of messages) {
+    if (msg.role === 'tool') {
+      toolBuf.push(msg)
+    } else {
+      flushTools()
+      if (msg.role === 'user') result.push({ kind: 'user', message: msg })
+      else if (msg.role === 'assistant') result.push({ kind: 'assistant', message: msg })
+      else result.push({ kind: 'system', message: msg })
+    }
+  }
+  flushTools()
+  return result
+}
+
+// ─── Main Component ───
+
+export function ConversationView() {
+  const tabs = useSessionStore((s) => s.tabs)
+  const activeTabId = useSessionStore((s) => s.activeTabId)
+  const sendMessage = useSessionStore((s) => s.sendMessage)
+  const staticInfo = useSessionStore((s) => s.staticInfo)
+  const scrollRef = useRef<HTMLDivElement>(null)
+  const bottomRef = useRef<HTMLDivElement>(null)
+  const [renderOffset, setRenderOffset] = useState(0) // 0 = show from tail
+  const isNearBottomRef = useRef(true)
+  const prevTabIdRef = useRef(activeTabId)
+  const colors = useColors()
+  const expandedUI = useThemeStore((s) => s.expandedUI)
+
+  const tab = tabs.find((t) => t.id === activeTabId)
+
+  // Reset render offset and scroll state when switching tabs
+  useEffect(() => {
+    if (activeTabId !== prevTabIdRef.current) {
+      prevTabIdRef.current = activeTabId
+      setRenderOffset(0)
+      isNearBottomRef.current = true
+    }
+  }, [activeTabId])
+
+  // Track whether user is scrolled near the bottom
+  const handleScroll = useCallback(() => {
+    const el = scrollRef.current
+    if (!el) return
+    isNearBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 60
+  }, [])
+
+  // Auto-scroll when content changes and user is near bottom.
+  const msgCount = tab?.messages.length ?? 0
+  const lastMsg = tab?.messages[tab.messages.length - 1]
+  const permissionQueueLen = tab?.permissionQueue?.length ?? 0
+  const queuedCount = tab?.queuedPrompts?.length ?? 0
+  const scrollTrigger = `${msgCount}:${lastMsg?.content?.length ?? 0}:${permissionQueueLen}:${queuedCount}`
+
+  useEffect(() => {
+    if (isNearBottomRef.current && scrollRef.current) {
+      scrollRef.current.scrollTop = scrollRef.current.scrollHeight
+    }
+  }, [scrollTrigger])
+
+  // Group only the visible slice of messages
+  const allMessages = tab?.messages ?? []
+  const totalCount = allMessages.length
+  const startIndex = Math.max(0, totalCount - INITIAL_RENDER_CAP - renderOffset * PAGE_SIZE)
+  const visibleMessages = startIndex > 0 ? allMessages.slice(startIndex) : allMessages
+  const hasOlder = startIndex > 0
+
+  const grouped = useMemo(
+    () => groupMessages(visibleMessages),
+    [visibleMessages],
+  )
+
+  const hiddenCount = totalCount - visibleMessages.length
+
+  const handleLoadOlder = useCallback(() => {
+    setRenderOffset((o) => o + 1)
+  }, [])
+
+  if (!tab) return null
+
+  const isRunning = tab.status === 'running' || tab.status === 'connecting'
+  const isDead = tab.status === 'dead'
+  const isFailed = tab.status === 'failed'
+  const showInterrupt = isRunning && tab.messages.some((m) => m.role === 'user')
+
+  if (tab.messages.length === 0) {
+    return <EmptyState />
+  }
+
+  // Messages from before initial render cap are "historical" — no motion
+  const historicalThreshold = Math.max(0, totalCount - 20)
+
+  const handleRetry = () => {
+    const lastUserMsg = [...tab.messages].reverse().find((m) => m.role === 'user')
+    if (lastUserMsg) {
+      sendMessage(lastUserMsg.content)
+    }
+  }
+
+  return (
+    <div
+      data-clui-ui
+    >
+      {/* Scrollable messages area */}
+      <div
+        ref={scrollRef}
+        className="overflow-y-auto overflow-x-hidden px-4 pt-2 conversation-selectable"
+        style={{ maxHeight: expandedUI ? 460 : 336, paddingBottom: 28 }}
+        onScroll={handleScroll}
+      >
+        {/* Load older button */}
+        {hasOlder && (
+          <div className="flex justify-center py-2">
+            <button
+              onClick={handleLoadOlder}
+              className="text-[11px] px-3 py-1 rounded-full transition-colors"
+              style={{ color: colors.textTertiary, border: `1px solid ${colors.toolBorder}` }}
+            >
+              Load {Math.min(PAGE_SIZE, hiddenCount)} older messages ({hiddenCount} hidden)
+            </button>
+          </div>
+        )}
+
+        <div className="space-y-1 relative">
+          {grouped.map((item, idx) => {
+            const msgIndex = startIndex + idx
+            const isHistorical = msgIndex < historicalThreshold
+
+            switch (item.kind) {
+              case 'user':
+                return <UserMessage key={item.message.id} message={item.message} skipMotion={isHistorical} />
+              case 'assistant':
+                return <AssistantMessage key={item.message.id} message={item.message} skipMotion={isHistorical} />
+              case 'tool-group':
+                return <ToolGroup key={`tg-${item.messages[0].id}`} tools={item.messages} skipMotion={isHistorical} />
+              case 'system':
+                return <SystemMessage key={item.message.id} message={item.message} skipMotion={isHistorical} />
+              default:
+                return null
+            }
+          })}
+        </div>
+
+        {/* Permission card (shows first item from queue) */}
+        <AnimatePresence>
+          {tab.permissionQueue.length > 0 && (
+            <PermissionCard
+              tabId={tab.id}
+              permission={tab.permissionQueue[0]}
+              queueLength={tab.permissionQueue.length}
+            />
+          )}
+        </AnimatePresence>
+
+        {/* Permission denied fallback card */}
+        <AnimatePresence>
+          {tab.permissionDenied && (
+            <PermissionDeniedCard
+              tools={tab.permissionDenied.tools}
+              sessionId={tab.claudeSessionId}
+              projectPath={staticInfo?.projectPath || ''}
+              onDismiss={() => {
+                useSessionStore.setState((s) => ({
+                  tabs: s.tabs.map((t) =>
+                    t.id === tab.id ? { ...t, permissionDenied: null } : t
+                  ),
+                }))
+              }}
+            />
+          )}
+        </AnimatePresence>
+
+        {/* Queued prompts */}
+        <AnimatePresence>
+          {tab.queuedPrompts.map((prompt, i) => (
+            <QueuedMessage key={`queued-${i}`} content={prompt} />
+          ))}
+        </AnimatePresence>
+
+        <div ref={bottomRef} />
+      </div>
+
+      {/* Activity row — overlaps bottom of scroll area as a fade strip */}
+      <div
+        className="flex items-center justify-between px-4 relative"
+        style={{
+          height: 28,
+          minHeight: 28,
+          marginTop: -28,
+          background: `linear-gradient(to bottom, transparent, ${colors.containerBg} 70%)`,
+          zIndex: 2,
+        }}
+      >
+        {/* Left: status indicator */}
+        <div className="flex items-center gap-1.5 text-[11px] min-w-0">
+          {isRunning && (
+            <span className="flex items-center gap-1.5">
+              <span className="flex gap-[3px]">
+                <span className="w-[4px] h-[4px] rounded-full animate-bounce-dot" style={{ background: colors.statusRunning, animationDelay: '0ms' }} />
+                <span className="w-[4px] h-[4px] rounded-full animate-bounce-dot" style={{ background: colors.statusRunning, animationDelay: '150ms' }} />
+                <span className="w-[4px] h-[4px] rounded-full animate-bounce-dot" style={{ background: colors.statusRunning, animationDelay: '300ms' }} />
+              </span>
+              <span style={{ color: colors.textSecondary }}>{tab.currentActivity || 'Working...'}</span>
+            </span>
+          )}
+
+          {isDead && (
+            <span style={{ color: colors.statusError, fontSize: 11 }}>Session ended unexpectedly</span>
+          )}
+
+          {isFailed && (
+            <span className="flex items-center gap-1.5">
+              <span style={{ color: colors.statusError, fontSize: 11 }}>Failed</span>
+              <button
+                onClick={handleRetry}
+                className="flex items-center gap-1 rounded-full px-2 py-0.5 transition-colors"
+                style={{ color: colors.accent, fontSize: 11 }}
+              >
+                <ArrowCounterClockwise size={10} />
+                Retry
+              </button>
+            </span>
+          )}
+        </div>
+
+        {/* Right: interrupt button when running */}
+        <div className="flex items-center flex-shrink-0">
+          <AnimatePresence>
+            {showInterrupt && (
+              <InterruptButton tabId={tab.id} />
+            )}
+          </AnimatePresence>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ─── Empty State (directory picker before first message) ───
+
+function EmptyState() {
+  const setBaseDirectory = useSessionStore((s) => s.setBaseDirectory)
+  const colors = useColors()
+
+  // Detect platform for the correct hotkey hint
+  const isMac = typeof navigator !== 'undefined' && /Mac|iPhone|iPod|iPad/i.test(navigator.platform)
+  const hotkeyLabel = isMac ? '⌥ Space' : 'Alt+Shift+Space'
+
+  const handleChooseFolder = async () => {
+    const dir = await window.clui.selectDirectory()
+    if (dir) {
+      setBaseDirectory(dir)
+    }
+  }
+
+  return (
+    <div
+      className="flex flex-col items-center justify-center px-4 py-3 gap-1.5"
+      style={{ minHeight: 80 }}
+    >
+      <button
+        onClick={handleChooseFolder}
+        className="flex items-center gap-1.5 text-[12px] px-3 py-1.5 rounded-lg transition-colors"
+        style={{
+          color: colors.accent,
+          background: colors.surfaceHover,
+          border: 'none',
+          cursor: 'pointer',
+        }}
+      >
+        <FolderOpen size={13} />
+        Choose folder
+      </button>
+      <span className="text-[11px]" style={{ color: colors.textTertiary }}>
+        Press <strong style={{ color: colors.textSecondary }}>{hotkeyLabel}</strong> to show/hide this overlay
+      </span>
+    </div>
+  )
+}
+
+// ─── Copy Button ───
+
+function CopyButton({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false)
+  const colors = useColors()
+
+  const handleCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(text)
+      setCopied(true)
+      setTimeout(() => setCopied(false), 1500)
+    } catch {}
+  }
+
+  return (
+    <motion.button
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      transition={{ duration: 0.12 }}
+      onClick={handleCopy}
+      className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md text-[11px] cursor-pointer flex-shrink-0"
+      style={{
+        background: copied ? colors.statusCompleteBg : 'transparent',
+        color: copied ? colors.statusComplete : colors.textTertiary,
+        border: 'none',
+      }}
+      title="Copy response"
+    >
+      {copied ? <Check size={11} /> : <Copy size={11} />}
+      <span>{copied ? 'Copied' : 'Copy'}</span>
+    </motion.button>
+  )
+}
+
+// ─── Interrupt Button ───
+
+function InterruptButton({ tabId }: { tabId: string }) {
+  const colors = useColors()
+
+  const handleStop = () => {
+    window.clui.stopTab(tabId)
+  }
+
+  return (
+    <motion.button
+      initial={{ opacity: 0, scale: 0.8 }}
+      animate={{ opacity: 1, scale: 1 }}
+      exit={{ opacity: 0, scale: 0.8 }}
+      transition={{ duration: 0.1 }}
+      onClick={handleStop}
+      className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] cursor-pointer flex-shrink-0 font-medium"
+      style={{
+        background: colors.statusErrorBg,
+        color: colors.statusError,
+        border: `1px solid ${colors.statusError}44`,
+      }}
+      onMouseEnter={(e) => { e.currentTarget.style.background = colors.statusError; e.currentTarget.style.color = '#fff' }}
+      onMouseLeave={(e) => { e.currentTarget.style.background = colors.statusErrorBg; e.currentTarget.style.color = colors.statusError }}
+      title="Stop agent immediately (Interrupt)"
+    >
+      <Square size={8} weight="fill" />
+      Stop
+    </motion.button>
+  )
+}
+
+// ─── User Message ───
+
+function UserMessage({ message, skipMotion }: { message: Message; skipMotion?: boolean }) {
+  const colors = useColors()
+  const content = (
+    <div
+      className="text-[13px] leading-[1.5] px-3 py-1.5 max-w-[85%]"
+      style={{
+        background: colors.userBubble,
+        color: colors.userBubbleText,
+        border: `1px solid ${colors.userBubbleBorder}`,
+        borderRadius: '14px 14px 4px 14px',
+      }}
+    >
+      {message.content}
+    </div>
+  )
+
+  if (skipMotion) {
+    return <div className="flex justify-end py-1.5">{content}</div>
+  }
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 6 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.15 }}
+      className="flex justify-end py-1.5"
+    >
+      {content}
+    </motion.div>
+  )
+}
+
+// ─── Queued Message (waiting at bottom until processed) ───
+
+function QueuedMessage({ content }: { content: string }) {
+  const colors = useColors()
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 8 }}
+      animate={{ opacity: 1, y: 0 }}
+      exit={{ opacity: 0, scale: 0.95 }}
+      transition={{ duration: 0.15 }}
+      className="flex justify-end py-1.5"
+    >
+      <div
+        className="text-[13px] leading-[1.5] px-3 py-1.5 max-w-[85%]"
+        style={{
+          background: colors.userBubble,
+          color: colors.userBubbleText,
+          border: `1px dashed ${colors.userBubbleBorder}`,
+          borderRadius: '14px 14px 4px 14px',
+          opacity: 0.6,
+        }}
+      >
+        {content}
+      </div>
+    </motion.div>
+  )
+}
+
+// ─── Table scroll wrapper — fade edges when horizontally scrollable ───
+
+function TableScrollWrapper({ children }: { children: React.ReactNode }) {
+  const ref = useRef<HTMLDivElement>(null)
+  const [fade, setFade] = useState<string | undefined>(undefined)
+  const prevFade = useRef<string | undefined>(undefined)
+
+  const update = useCallback(() => {
+    const el = ref.current
+    if (!el) return
+    const { scrollLeft, scrollWidth, clientWidth } = el
+    let next: string | undefined
+    if (scrollWidth <= clientWidth + 1) {
+      next = undefined
+    } else {
+      const l = scrollLeft > 1
+      const r = scrollLeft + clientWidth < scrollWidth - 1
+      next = l && r
+        ? 'linear-gradient(to right, transparent, black 24px, black calc(100% - 24px), transparent)'
+        : l
+          ? 'linear-gradient(to right, transparent, black 24px)'
+          : r
+            ? 'linear-gradient(to right, black calc(100% - 24px), transparent)'
+            : undefined
+    }
+    if (next !== prevFade.current) {
+      prevFade.current = next
+      setFade(next)
+    }
+  }, [])
+
+  useEffect(() => {
+    update()
+    const el = ref.current
+    if (!el) return
+    const ro = new ResizeObserver(update)
+    ro.observe(el)
+    const table = el.querySelector('table')
+    if (table) ro.observe(table)
+    return () => ro.disconnect()
+  }, [update])
+
+  return (
+    <div
+      ref={ref}
+      onScroll={update}
+      style={{
+        overflowX: 'auto',
+        scrollbarWidth: 'thin',
+        maskImage: fade,
+        WebkitMaskImage: fade,
+      }}
+    >
+      <table>{children}</table>
+    </div>
+  )
+}
+
+// ─── Image card — graceful fallback when src returns 404 ───
+
+function ImageCard({ src, alt, colors }: { src?: string; alt?: string; colors: ReturnType<typeof useColors> }) {
+  const [failed, setFailed] = useState(false)
+  // Reset failed state when src changes (e.g. during streaming)
+  useEffect(() => { setFailed(false) }, [src])
+  const label = alt || 'Image'
+  const open = () => { if (src) window.clui.openExternal(String(src)) }
+
+  if (failed || !src) {
+    return (
+      <button
+        type="button"
+        className="inline-flex items-center gap-1.5 my-1 px-2.5 py-1.5 rounded-md text-[12px] cursor-pointer"
+        style={{ background: colors.surfacePrimary, color: colors.accent, border: `1px solid ${colors.toolBorder}` }}
+        onClick={open}
+        title={src}
+      >
+        <Globe size={12} />
+        Image unavailable{alt ? ` — ${alt}` : ''}
+      </button>
+    )
+  }
+
+  return (
+    <button
+      type="button"
+      className="block my-2 rounded-lg overflow-hidden border text-left cursor-pointer"
+      style={{ borderColor: colors.toolBorder, background: colors.surfacePrimary }}
+      onClick={open}
+      title={src}
+    >
+      <img
+        src={src}
+        alt={label}
+        className="block w-full max-h-[260px] object-cover"
+        loading="lazy"
+        onError={() => setFailed(true)}
+      />
+      {alt && (
+        <div className="px-2 py-1 text-[11px]" style={{ color: colors.textTertiary }}>
+          {alt}
+        </div>
+      )}
+    </button>
+  )
+}
+
+// ─── Assistant Message (memoized — only re-renders when content changes) ───
+
+const AssistantMessage = React.memo(function AssistantMessage({
+  message,
+  skipMotion,
+}: {
+  message: Message
+  skipMotion?: boolean
+}) {
+  const colors = useColors()
+
+  const markdownComponents = useMemo(() => ({
+    table: ({ children }: any) => <TableScrollWrapper>{children}</TableScrollWrapper>,
+    a: ({ href, children }: any) => (
+      <button
+        type="button"
+        className="underline decoration-dotted underline-offset-2 cursor-pointer"
+        style={{ color: colors.accent }}
+        onClick={() => {
+          if (href) window.clui.openExternal(String(href))
+        }}
+      >
+        {children}
+      </button>
+    ),
+    img: ({ src, alt }: any) => <ImageCard src={src} alt={alt} colors={colors} />,
+  }), [colors])
+
+  const inner = (
+    <div className="group/msg relative">
+      <div className="text-[13px] leading-[1.6] prose-cloud min-w-0 max-w-[92%]">
+        <Markdown remarkPlugins={REMARK_PLUGINS} components={markdownComponents}>
+          {message.content}
+        </Markdown>
+      </div>
+      {/* Copy button — always in DOM, shown via CSS :hover (no React state needed).
+          Absolute positioning so it never shifts the text layout. */}
+      {message.content.trim() && (
+        <div className="absolute bottom-0 right-0 opacity-0 group-hover/msg:opacity-100 transition-opacity duration-100">
+          <CopyButton text={message.content} />
+        </div>
+      )}
+    </div>
+  )
+
+  if (skipMotion) {
+    return <div className="py-1">{inner}</div>
+  }
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 6 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.15 }}
+      className="py-1"
+    >
+      {inner}
+    </motion.div>
+  )
+}, (prev, next) => prev.message.content === next.message.content && prev.skipMotion === next.skipMotion)
+
+// ─── Tool Group (collapsible timeline — Claude Code style) ───
+
+/** Build a short description from tool name + input for the collapsed summary */
+function toolSummary(tools: Message[]): string {
+  if (tools.length === 0) return ''
+  // Use first tool's context for summary
+  const first = tools[0]
+  if (first.humanDescription) {
+    if (tools.length === 1) return first.humanDescription
+    return `${first.humanDescription} and ${tools.length - 1} more tool${tools.length > 2 ? 's' : ''}`
+  }
+  const desc = getToolDescription(first.toolName || 'Tool', first.toolInput)
+  if (tools.length === 1) return desc
+  return `${desc} and ${tools.length - 1} more tool${tools.length > 2 ? 's' : ''}`
+}
+
+/** Short human-readable description from tool name + already-parsed input */
+function getToolDescriptionFromParsed(name: string, parsed: Record<string, unknown>): string {
+  const s = (v: unknown) => (typeof v === 'string' ? v : '')
+  switch (name) {
+    case 'Read': return `Read ${s(parsed.file_path) || s(parsed.path) || 'file'}`
+    case 'Edit': return `Edit ${s(parsed.file_path) || 'file'}`
+    case 'Write': return `Write ${s(parsed.file_path) || 'file'}`
+    case 'Glob': return `Search files: ${s(parsed.pattern)}`
+    case 'Grep': return `Search: ${s(parsed.pattern)}`
+    case 'Bash': {
+      const cmd = s(parsed.command)
+      return cmd.length > 60 ? `${cmd.substring(0, 57)}...` : cmd || 'Bash'
+    }
+    case 'WebSearch': return `Search: ${s(parsed.query) || s(parsed.search_query)}`
+    case 'WebFetch': return `Fetch: ${s(parsed.url)}`
+    case 'Agent': return `Agent: ${(s(parsed.prompt) || s(parsed.description)).substring(0, 50)}`
+    // Computer Use tools
+    case 'screenshot': return '📸 Capturing screen'
+    case 'mouse_move': return `🖱️ Move to (${s(parsed.x)}, ${s(parsed.y)})`
+    case 'mouse_click': return `🖱️ ${s(parsed.button) || 'Left'} ${s(parsed.click_type) || 'single'} click`
+    case 'keyboard_type': {
+      const text = s(parsed.text)
+      return `⌨️ Type: "${text.length > 30 ? text.substring(0, 27) + '...' : text}"`
+    }
+    case 'keyboard_hotkey': {
+      const keys = Array.isArray(parsed.keys) ? (parsed.keys as string[]).join('+') : 'keys'
+      return `⌨️ Hotkey: ${keys}`
+    }
+    case 'mouse_scroll': return `🖱️ Scroll ${s(parsed.direction)} by ${s(parsed.amount) || '3'}`
+    // Browser automation tools
+    case 'browser_navigate': return `🌐 Navigate: ${s(parsed.url)}`
+    case 'browser_click': return `🌐 Click: ${s(parsed.selector)}`
+    case 'browser_type_text': return `🌐 Type into ${s(parsed.selector)}`
+    case 'browser_scroll': return `🌐 Scroll ${s(parsed.direction)}`
+    case 'browser_extract_text': return `🌐 Extract text${parsed.selector ? ': ' + s(parsed.selector) : ''}`
+    case 'browser_screenshot': return '🌐 Browser screenshot'
+    case 'browser_get_page_state': return '🌐 Analyze page'
+    case 'browser_wait_for': return `🌐 Wait for: ${s(parsed.selector)}`
+    case 'browser_go_back': return '🌐 Go back'
+    case 'browser_evaluate': return '🌐 Execute JS'
+    default: return name
+  }
+}
+
+/** Short human-readable description from tool name + input */
+function getToolDescription(name: string, input?: string): string {
+  if (!input) return name
+
+  try {
+    return getToolDescriptionFromParsed(name, JSON.parse(input))
+  } catch {
+    // Input is not JSON or is partial — show truncated raw
+    const trimmed = input.trim()
+    if (trimmed.length > 60) return `${name}: ${trimmed.substring(0, 57)}...`
+    return trimmed ? `${name}: ${trimmed}` : name
+  }
+}
+
+function screenshotDataUrlFromToolOutput(output?: string): string | null {
+  if (!output) return null
+  const trimmed = output.trim()
+  if (trimmed.startsWith('SCREENSHOT_BASE64:')) {
+    const b64 = trimmed.substring('SCREENSHOT_BASE64:'.length).trim()
+    if (!b64) return null
+    return `data:image/png;base64,${b64}`
+  }
+  if (trimmed.startsWith('data:image/')) return trimmed
+  return null
+}
+
+function ToolGroup({ tools, skipMotion }: { tools: Message[]; skipMotion?: boolean }) {
+  const hasRunning = tools.some((t) => t.toolStatus === 'running')
+  const [expanded, setExpanded] = useState(false)
+  const [previewSrc, setPreviewSrc] = useState<string | null>(null)
+  const [openReasoningByToolId, setOpenReasoningByToolId] = useState<Record<string, boolean>>({})
+  const colors = useColors()
+
+  const reasoningMarkdownComponents = useMemo(() => ({
+    p: ({ children }: any) => (
+      <p className="mb-2 last:mb-0 text-[11px] leading-[1.55]" style={{ color: colors.textSecondary }}>{children}</p>
+    ),
+    strong: ({ children }: any) => (
+      <strong className="font-semibold" style={{ color: colors.textPrimary }}>{children}</strong>
+    ),
+    ul: ({ children }: any) => (
+      <ul className="list-disc pl-4 mb-2 last:mb-0 text-[11px]" style={{ color: colors.textSecondary }}>{children}</ul>
+    ),
+    ol: ({ children }: any) => (
+      <ol className="list-decimal pl-4 mb-2 last:mb-0 text-[11px]" style={{ color: colors.textSecondary }}>{children}</ol>
+    ),
+    li: ({ children }: any) => (
+      <li className="mb-1 last:mb-0">{children}</li>
+    ),
+  }), [colors])
+
+  const isOpen = expanded || hasRunning
+
+  const previewModal = (
+    <AnimatePresence>
+      {previewSrc && (
+        <motion.div
+          key="tool-screenshot-preview"
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          transition={{ duration: 0.12 }}
+          className="fixed inset-0 z-[120] flex items-center justify-center p-4"
+          style={{ background: 'rgba(0, 0, 0, 0.62)' }}
+          onClick={() => setPreviewSrc(null)}
+        >
+          <motion.div
+            initial={{ opacity: 0, scale: 0.96, y: 8 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            exit={{ opacity: 0, scale: 0.96, y: 8 }}
+            transition={{ duration: 0.16 }}
+            className="relative rounded-xl overflow-hidden"
+            style={{
+              maxWidth: '92vw',
+              maxHeight: '86vh',
+              border: `1px solid ${colors.toolBorder}`,
+              background: colors.surfacePrimary,
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between px-3 py-2" style={{ borderBottom: `1px solid ${colors.toolBorder}` }}>
+              <div className="text-[12px]" style={{ color: colors.textSecondary }}>
+                Screenshot captured by the model
+              </div>
+              <button
+                type="button"
+                className="p-1 rounded"
+                style={{ color: colors.textTertiary }}
+                onClick={() => setPreviewSrc(null)}
+                title="Close preview"
+              >
+                <X size={14} />
+              </button>
+            </div>
+
+            <img
+              src={previewSrc}
+              alt="Captured screenshot"
+              className="block"
+              style={{
+                maxWidth: '92vw',
+                maxHeight: 'calc(86vh - 42px)',
+                objectFit: 'contain',
+              }}
+            />
+          </motion.div>
+        </motion.div>
+      )}
+    </AnimatePresence>
+  )
+
+  if (isOpen) {
+    const inner = (
+      <div className="py-1">
+        {/* Collapse header — click to close */}
+        {!hasRunning && (
+          <div
+            className="flex items-center gap-1 cursor-pointer mb-1.5 select-none"
+            onClick={() => setExpanded(false)}
+          >
+            <CaretDown size={10} style={{ color: colors.textMuted }} />
+            <span className="text-[11px]" style={{ color: colors.textMuted }}>
+              {tools.length} action{tools.length !== 1 ? 's' : ''} completed
+            </span>
+          </div>
+        )}
+
+        {/* Timeline */}
+        <div className="relative pl-6">
+          {/* Vertical line */}
+          <div
+            className="absolute left-[10px] top-1 bottom-1 w-px"
+            style={{ background: colors.timelineLine }}
+          />
+
+          <div className="space-y-3">
+            {tools.map((tool) => {
+              const isRunning = tool.toolStatus === 'running'
+              const toolName = tool.toolName || 'Tool'
+              // Parse tool input once for both description and detail content
+              let parsedInput: Record<string, unknown> | null = null
+              if (tool.toolInput) {
+                try { parsedInput = JSON.parse(tool.toolInput) } catch { /* partial JSON */ }
+              }
+              const desc = tool.humanDescription || (parsedInput
+                ? getToolDescriptionFromParsed(toolName, parsedInput)
+                : getToolDescription(toolName, tool.toolInput))
+              const hasReasoning = Boolean(tool.reasoning || tool.taskSwitch)
+              const isReasoningOpen = Boolean(openReasoningByToolId[tool.id])
+              const screenshotSrc = toolName === 'screenshot'
+                ? screenshotDataUrlFromToolOutput(tool.content)
+                : null
+
+              return (
+                <div key={tool.id} className="relative">
+                  {/* Timeline node */}
+                  <div
+                    className="absolute -left-6 top-[1px] w-[20px] h-[20px] rounded-full flex items-center justify-center"
+                    style={{
+                      background: isRunning ? colors.toolRunningBg : colors.toolBg,
+                      border: `1px solid ${isRunning ? colors.toolRunningBorder : colors.toolBorder}`,
+                    }}
+                  >
+                    {isRunning
+                      ? <SpinnerGap size={10} className="animate-spin" style={{ color: colors.statusRunning }} />
+                      : <ToolIcon name={toolName} size={10} />
+                    }
+                  </div>
+
+                  {/* Tool description */}
+                  <div className="min-w-0">
+                    {screenshotSrc && !isRunning ? (
+                      <button
+                        type="button"
+                        className="text-[12px] leading-[1.4] block truncate text-left underline decoration-dotted underline-offset-2"
+                        style={{ color: colors.accent }}
+                        onClick={() => setPreviewSrc(screenshotSrc)}
+                        title="View the exact screenshot captured by the model"
+                      >
+                        {desc} (click to preview)
+                      </button>
+                    ) : (
+                      <span
+                        className="text-[12px] leading-[1.4] block truncate"
+                        style={{ color: isRunning ? colors.textSecondary : colors.textTertiary }}
+                      >
+                        {desc}
+                      </span>
+                    )}
+
+                    {/* Tool detail content for Edit/Write */}
+                    {!isRunning && parsedInput && (() => {
+                      const monoFont = 'ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace'
+                      if (toolName === 'Edit' && ('old_string' in parsedInput || 'new_string' in parsedInput)) {
+                        const oldStr = typeof parsedInput.old_string === 'string' ? parsedInput.old_string : null
+                        const newStr = typeof parsedInput.new_string === 'string' ? parsedInput.new_string : null
+                        if (oldStr === null && newStr === null) return null
+                        return (
+                          <div
+                            className="mt-1 text-[11px] leading-[1.5] rounded overflow-hidden"
+                            style={{ border: `1px solid ${colors.toolBorder}` }}
+                            role="group"
+                            aria-label="Edit diff"
+                          >
+                            {oldStr !== null && (
+                              <pre
+                                className="px-2 py-1 whitespace-pre-wrap break-all overflow-y-auto"
+                                aria-label="Removed"
+                                style={{
+                                  background: colors.diffRemovedBg,
+                                  color: colors.textSecondary,
+                                  maxHeight: 120,
+                                  margin: 0,
+                                  fontFamily: monoFont,
+                                  fontSize: 10,
+                                }}
+                              ><span style={{ color: colors.textMuted, userSelect: 'none' }}>- </span>{oldStr.length > 300 ? oldStr.slice(0, 297) + '...' : oldStr}</pre>
+                            )}
+                            {newStr !== null && (
+                              <pre
+                                className="px-2 py-1 whitespace-pre-wrap break-all overflow-y-auto"
+                                aria-label="Added"
+                                style={{
+                                  background: colors.diffAddedBg,
+                                  color: colors.textSecondary,
+                                  maxHeight: 120,
+                                  margin: 0,
+                                  fontFamily: monoFont,
+                                  fontSize: 10,
+                                }}
+                              ><span style={{ color: colors.textMuted, userSelect: 'none' }}>+ </span>{newStr.length > 300 ? newStr.slice(0, 297) + '...' : newStr}</pre>
+                            )}
+                          </div>
+                        )
+                      }
+                      if (toolName === 'Write' && typeof parsedInput.content === 'string') {
+                        const content = parsedInput.content
+                        const snippet = content.length > 200 ? content.slice(0, 197) + '...' : content
+                        return (
+                          <pre
+                            className="mt-1 px-2 py-1 text-[10px] leading-[1.5] rounded whitespace-pre-wrap break-all overflow-y-auto"
+                            aria-label="File content"
+                            style={{
+                              background: colors.surfaceHover,
+                              color: colors.textSecondary,
+                              maxHeight: 120,
+                              margin: 0,
+                              marginTop: 4,
+                              fontFamily: monoFont,
+                              border: `1px solid ${colors.toolBorder}`,
+                            }}
+                          >{snippet}</pre>
+                        )
+                      }
+                      return null
+                    })()}
+
+                    {/* Result badge */}
+                    {!isRunning && (
+                      <span
+                        className="inline-block text-[10px] mt-0.5 px-1.5 py-[1px] rounded"
+                        style={{
+                          background: tool.toolStatus === 'error' ? colors.statusErrorBg : colors.statusCompleteBg,
+                          color: tool.toolStatus === 'error' ? colors.statusError : colors.statusComplete,
+                        }}
+                      >
+                        {tool.toolStatus === 'error' ? '✗ error' : '✓ done'}
+                      </span>
+                    )}
+
+                    {!isRunning && screenshotSrc && (
+                      <button
+                        type="button"
+                        className="inline-block text-[10px] mt-1 ml-1 px-1.5 py-[1px] rounded"
+                        style={{ background: colors.accentLight, color: colors.accent }}
+                        onClick={() => setPreviewSrc(screenshotSrc)}
+                        title="Open captured screenshot"
+                      >
+                        View screenshot
+                      </button>
+                    )}
+
+                    {isRunning && (
+                      <span className="text-[10px] mt-0.5 block" style={{ color: colors.statusRunning }}>
+                        running…
+                      </span>
+                    )}
+
+                    {!isRunning && hasReasoning && (
+                      <div className="mt-1">
+                        <button
+                          type="button"
+                          className="inline-flex items-center gap-1 text-[10px] px-2 py-[2px] rounded-md"
+                          style={{
+                            background: colors.surfaceHover,
+                            color: colors.textSecondary,
+                            border: `1px solid ${colors.toolBorder}`,
+                          }}
+                          onClick={() => {
+                            setOpenReasoningByToolId((prev) => ({
+                              ...prev,
+                              [tool.id]: !prev[tool.id],
+                            }))
+                          }}
+                        >
+                          {isReasoningOpen ? <CaretDown size={9} /> : <CaretRight size={9} />}
+                          {isReasoningOpen ? 'Hide why' : 'Why this step'}
+                        </button>
+
+                        {isReasoningOpen && (
+                          <div
+                            className="mt-2 rounded-lg px-2.5 py-1.5"
+                            style={{
+                              background: colors.surfacePrimary,
+                              border: `1px solid ${colors.toolBorder}`,
+                            }}
+                          >
+                            {tool.taskSwitch && (
+                              <div className="mb-2.5 rounded-md px-2 py-1.5" style={{ background: colors.surfaceHover }}>
+                                <div className="text-[10px] uppercase tracking-wide mb-1" style={{ color: colors.textMuted }}>
+                                  Task switch
+                                </div>
+                                <div className="text-[11px] leading-[1.45] mb-1" style={{ color: colors.textSecondary }}>
+                                  {tool.taskSwitch.previousTask} → {tool.taskSwitch.newTask}
+                                </div>
+                                <div className="text-[11px] leading-[1.45] mb-1" style={{ color: colors.textSecondary }}>
+                                  {tool.taskSwitch.reason}
+                                </div>
+                                <div>
+                                  <span
+                                    className="inline-block text-[10px] px-1.5 py-[1px] rounded"
+                                    style={{
+                                      background: tool.taskSwitch.necessary ? colors.statusCompleteBg : colors.surfacePrimary,
+                                      color: tool.taskSwitch.necessary ? colors.statusComplete : colors.textSecondary,
+                                      border: `1px solid ${colors.toolBorder}`,
+                                    }}
+                                  >
+                                    {tool.taskSwitch.necessary ? 'Necessary switch' : 'Optional switch'}
+                                  </span>
+                                </div>
+                              </div>
+                            )}
+                            {tool.reasoning && (
+                              <div>
+                                <div className="text-[10px] uppercase tracking-wide mb-1.5" style={{ color: colors.textMuted }}>
+                                  Model reasoning
+                                </div>
+                                <div
+                                  className="max-h-[220px] overflow-y-auto pr-1"
+                                  style={{ scrollbarWidth: 'thin' }}
+                                >
+                                  <Markdown remarkPlugins={REMARK_PLUGINS} components={reasoningMarkdownComponents}>
+                                    {tool.reasoning}
+                                  </Markdown>
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      </div>
+    )
+
+    if (skipMotion) return <>{inner}{previewModal}</>
+
+    return (
+      <>
+        <motion.div
+          initial={{ opacity: 0, height: 0 }}
+          animate={{ opacity: 1, height: 'auto' }}
+          exit={{ opacity: 0, height: 0 }}
+          transition={{ duration: 0.15 }}
+        >
+          {inner}
+        </motion.div>
+        {previewModal}
+      </>
+    )
+  }
+
+  // Collapsed state — summary text + chevron with count badge
+  const summary = toolSummary(tools)
+
+  const inner = (
+    <div
+      className="flex items-center gap-1.5 cursor-pointer py-[2px] select-none"
+      onClick={() => setExpanded(true)}
+      title="Click to expand actions"
+    >
+      <CaretRight size={9} className="flex-shrink-0" style={{ color: colors.textMuted }} />
+      <span
+        className="text-[10px] px-1.5 py-[1px] rounded-full flex-shrink-0"
+        style={{ background: colors.surfaceHover, color: colors.textMuted }}
+      >
+        {tools.length}
+      </span>
+      <span className="text-[11px] leading-[1.4] truncate" style={{ color: colors.textTertiary }}>
+        {summary}
+      </span>
+    </div>
+  )
+
+  if (skipMotion) return <><div className="py-0.5">{inner}</div>{previewModal}</>
+
+  return (
+    <>
+      <motion.div
+        initial={{ opacity: 0, y: 4 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.12 }}
+        className="py-0.5"
+      >
+        {inner}
+      </motion.div>
+      {previewModal}
+    </>
+  )
+}
+
+// ─── System Message ───
+
+function SystemMessage({ message, skipMotion }: { message: Message; skipMotion?: boolean }) {
+  const isError = message.content.startsWith('Error:') || message.content.includes('unexpectedly')
+  const colors = useColors()
+
+  const inner = (
+    <div
+      className="text-[11px] leading-[1.5] px-2.5 py-1 rounded-lg inline-block whitespace-pre-wrap"
+      style={{
+        background: isError ? colors.statusErrorBg : colors.surfaceHover,
+        color: isError ? colors.statusError : colors.textTertiary,
+      }}
+    >
+      {message.content}
+    </div>
+  )
+
+  if (skipMotion) return <div className="py-0.5">{inner}</div>
+
+  return (
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      transition={{ duration: 0.15 }}
+      className="py-0.5"
+    >
+      {inner}
+    </motion.div>
+  )
+}
+
+// ─── Tool Icon mapping ───
+
+function ToolIcon({ name, size = 12 }: { name: string; size?: number }) {
+  const colors = useColors()
+  const ICONS: Record<string, React.ReactNode> = {
+    Read: <FileText size={size} />,
+    Edit: <PencilSimple size={size} />,
+    Write: <FileArrowUp size={size} />,
+    Bash: <Terminal size={size} />,
+    Glob: <FolderOpen size={size} />,
+    Grep: <MagnifyingGlass size={size} />,
+    WebSearch: <Globe size={size} />,
+    WebFetch: <Globe size={size} />,
+    Agent: <Robot size={size} />,
+    AskUserQuestion: <Question size={size} />,
+    // Computer Use tools
+    screenshot: <Monitor size={size} />,
+    mouse_move: <MouseSimple size={size} />,
+    mouse_click: <CursorClick size={size} />,
+    keyboard_type: <Keyboard size={size} />,
+    keyboard_hotkey: <Keyboard size={size} />,
+    mouse_scroll: <ArrowsDownUp size={size} />,
+    // Browser automation tools
+    browser_navigate: <Globe size={size} />,
+    browser_click: <CursorClick size={size} />,
+    browser_type_text: <Keyboard size={size} />,
+    browser_scroll: <ArrowsDownUp size={size} />,
+    browser_extract_text: <FileText size={size} />,
+    browser_screenshot: <Monitor size={size} />,
+    browser_get_page_state: <Globe size={size} />,
+    browser_wait_for: <MagnifyingGlass size={size} />,
+    browser_go_back: <Globe size={size} />,
+    browser_evaluate: <Terminal size={size} />,
+  }
+
+  return (
+    <span className="flex items-center" style={{ color: colors.textTertiary }}>
+      {ICONS[name] || <Wrench size={size} />}
+    </span>
+  )
+}
