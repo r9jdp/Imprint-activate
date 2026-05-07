@@ -61,16 +61,60 @@ type WorkspaceSnapshot = {
   calendar: CalendarEvent[]
 }
 
+type StudentProfile = {
+  full_name: string
+  degree_program: string
+  semester: string
+  top_priorities: string[]
+  must_not_ignore: string[]
+  important_courses: string[]
+  default_help: string
+  reminder_style: string
+  output_style: string
+}
+
+type StudentProfileStatus = {
+  profile?: StudentProfile | null
+  has_profile: boolean
+}
+
+type StudentProfileDraft = {
+  full_name: string
+  degree_program: string
+  semester: string
+  top_priorities: string
+  must_not_ignore: string
+  important_courses: string
+  default_help: string
+  reminder_style: string
+  output_style: string
+}
+
+const EMPTY_PROFILE_DRAFT: StudentProfileDraft = {
+  full_name: '',
+  degree_program: '',
+  semester: '',
+  top_priorities: '',
+  must_not_ignore: '',
+  important_courses: '',
+  default_help: '',
+  reminder_style: '',
+  output_style: '',
+}
+
 export default function App() {
   const colors = useColors()
   const setThemeMode = useThemeStore((s) => s.setThemeMode)
   const [status, setStatus] = useState<GoogleConnectionStatus>({ configured: false, connected: false })
   const [snapshot, setSnapshot] = useState<WorkspaceSnapshot | null>(null)
-  const [busy, setBusy] = useState<'idle' | 'signing-in' | 'refreshing' | 'disconnecting' | 'asking'>('idle')
+  const [busy, setBusy] = useState<'idle' | 'signing-in' | 'refreshing' | 'disconnecting' | 'asking' | 'saving-profile'>('idle')
   const [feedback, setFeedback] = useState('')
   const [error, setError] = useState('')
   const [query, setQuery] = useState('')
   const [assistantAnswer, setAssistantAnswer] = useState('')
+  const [studentProfile, setStudentProfile] = useState<StudentProfile | null>(null)
+  const [profileDraft, setProfileDraft] = useState<StudentProfileDraft>(EMPTY_PROFILE_DRAFT)
+  const [showOnboarding, setShowOnboarding] = useState(false)
 
   useEffect(() => {
     setThemeMode('dark')
@@ -80,7 +124,10 @@ export default function App() {
   async function bootstrap() {
     try {
       const connectionStatus = await invoke<GoogleConnectionStatus>('google_connection_status')
+      const profileStatus = await invoke<StudentProfileStatus>('get_student_profile')
       setStatus(connectionStatus)
+      hydrateProfile(profileStatus.profile ?? null)
+      setShowOnboarding(!profileStatus.has_profile)
       if (connectionStatus.connected) {
         await refreshSnapshot()
       }
@@ -136,6 +183,23 @@ export default function App() {
     }
   }
 
+  async function saveProfile() {
+    setBusy('saving-profile')
+    setFeedback('')
+    setError('')
+    try {
+      const nextProfile = draftToProfile(profileDraft)
+      await invoke('save_student_profile', { studentProfile: nextProfile })
+      setStudentProfile(nextProfile)
+      setShowOnboarding(false)
+      setFeedback('Student profile saved locally. Imprint will now use it for prioritization and reminders.')
+    } catch (e) {
+      setError(normalizeError(e))
+    } finally {
+      setBusy('idle')
+    }
+  }
+
   async function askAssistant() {
     if (!snapshot || !query.trim()) return
     setBusy('asking')
@@ -160,6 +224,7 @@ export default function App() {
     const firstAssignment = snapshot.classroom.find((item) => item.due_date)
     return firstAssignment?.title || snapshot.gmail[0]?.subject || snapshot.calendar[0]?.summary || null
   }, [snapshot])
+  const profileStatusLabel = studentProfile ? 'Configured' : 'Missing'
 
   return (
     <div
@@ -208,6 +273,37 @@ export default function App() {
                 >
                   Alt + Shift + Space
                 </span>
+              </div>
+            </InfoCard>
+
+            <InfoCard
+              title="Student Profile"
+              action={
+                <StatusPill
+                  configured={Boolean(studentProfile)}
+                  connected={false}
+                  configuredLabel={profileStatusLabel}
+                  missingLabel="Not set"
+                />
+              }
+            >
+              <div className="space-y-3">
+                <div className="text-[12px] leading-6" style={{ color: colors.textSecondary }}>
+                  {studentProfile
+                    ? `Local memory is active for ${studentProfile.full_name || 'this student profile'}.`
+                    : 'Complete onboarding so Imprint can prioritize based on your goals, courses, and must-not-ignore signals.'}
+                </div>
+                <button
+                  onClick={() => setShowOnboarding((current) => !current)}
+                  className="w-full h-10 rounded-xl text-[12px] font-medium"
+                  style={{
+                    background: colors.surfaceSecondary,
+                    color: colors.textPrimary,
+                    border: `1px solid ${colors.containerBorder}`,
+                  }}
+                >
+                  {studentProfile ? 'Edit local profile' : 'Complete onboarding'}
+                </button>
               </div>
             </InfoCard>
 
@@ -282,8 +378,8 @@ export default function App() {
                   {status.connected ? `Ready, ${profileName}` : 'Connect your Google workspace'}
                 </h1>
                 <p className="text-[14px] mt-2 max-w-[680px]" style={{ color: colors.textSecondary }}>
-                  Start with live Gmail, Classroom, and Calendar reads. Once the data layer is stable, we'll add
-                  browser actions and the student context graph on top.
+                  Start with live Gmail, Classroom, and Calendar reads. Add your local student profile so Imprint can
+                  personalize what matters before we layer browser actions and graph memory on top.
                 </p>
               </div>
               <div
@@ -391,79 +487,202 @@ export default function App() {
               />
             </div>
 
-            <div
-              className="mt-5 rounded-2xl p-4 flex items-start gap-3 shrink-0"
-              style={{ background: colors.surfacePrimary, border: `1px solid ${colors.containerBorder}` }}
-            >
+            {showOnboarding ? (
               <div
-                className="w-10 h-10 rounded-2xl flex items-center justify-center shrink-0"
-                style={{ background: colors.accentLight, color: colors.accent }}
+                className="mt-5 rounded-2xl p-5 shrink-0"
+                style={{ background: colors.surfacePrimary, border: `1px solid ${colors.containerBorder}` }}
               >
-                <Sparkle size={18} weight="fill" />
+                <div className="flex items-start gap-3">
+                  <div
+                    className="w-10 h-10 rounded-2xl flex items-center justify-center shrink-0"
+                    style={{ background: colors.accentLight, color: colors.accent }}
+                  >
+                    <Sparkle size={18} weight="fill" />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="text-[15px] font-medium" style={{ color: colors.textPrimary }}>
+                      Set up your local student profile
+                    </div>
+                    <div className="text-[12px] mt-1 mb-4 leading-6" style={{ color: colors.textSecondary }}>
+                      This stays on your device and becomes the first layer of state for prioritization, reminders, and
+                      future browser actions.
+                    </div>
+                    <div className="grid grid-cols-2 gap-3">
+                      <ProfileField
+                        label="Full name"
+                        value={profileDraft.full_name}
+                        onChange={(value) => updateDraft('full_name', value)}
+                        placeholder="Rajdeep Pandey"
+                      />
+                      <ProfileField
+                        label="Degree / program"
+                        value={profileDraft.degree_program}
+                        onChange={(value) => updateDraft('degree_program', value)}
+                        placeholder="B.Tech Computer Science"
+                      />
+                      <ProfileField
+                        label="Semester / year"
+                        value={profileDraft.semester}
+                        onChange={(value) => updateDraft('semester', value)}
+                        placeholder="6th semester"
+                      />
+                      <ProfileField
+                        label="Default help mode"
+                        value={profileDraft.default_help}
+                        onChange={(value) => updateDraft('default_help', value)}
+                        placeholder="Prioritize, summarize, draft first versions"
+                      />
+                      <ProfileArea
+                        label="Top priorities"
+                        value={profileDraft.top_priorities}
+                        onChange={(value) => updateDraft('top_priorities', value)}
+                        placeholder="Placements, pending assignments, internship prep"
+                      />
+                      <ProfileArea
+                        label="Must-not-ignore signals"
+                        value={profileDraft.must_not_ignore}
+                        onChange={(value) => updateDraft('must_not_ignore', value)}
+                        placeholder="Placement cell emails, same-day deadlines, professor updates"
+                      />
+                      <ProfileArea
+                        label="Important courses"
+                        value={profileDraft.important_courses}
+                        onChange={(value) => updateDraft('important_courses', value)}
+                        placeholder="DBMS, OS, DWM"
+                      />
+                      <ProfileField
+                        label="Reminder style"
+                        value={profileDraft.reminder_style}
+                        onChange={(value) => updateDraft('reminder_style', value)}
+                        placeholder="Urgent-first with short follow-ups"
+                      />
+                    </div>
+                    <div className="mt-3">
+                      <ProfileField
+                        label="Output style"
+                        value={profileDraft.output_style}
+                        onChange={(value) => updateDraft('output_style', value)}
+                        placeholder="Concise bullets with clear next actions"
+                      />
+                    </div>
+                    <div className="mt-4 flex items-center gap-3">
+                      <button
+                        onClick={() => void saveProfile()}
+                        disabled={busy !== 'idle'}
+                        className="h-11 px-4 rounded-xl text-[13px] font-medium"
+                        style={{
+                          background: colors.accent,
+                          color: colors.textOnAccent,
+                          opacity: busy !== 'idle' ? 0.6 : 1,
+                        }}
+                      >
+                        {busy === 'saving-profile' ? 'Saving profile...' : 'Save local profile'}
+                      </button>
+                      {studentProfile && (
+                        <button
+                          onClick={() => setShowOnboarding(false)}
+                          className="h-11 px-4 rounded-xl text-[13px] font-medium"
+                          style={{
+                            background: colors.surfaceSecondary,
+                            color: colors.textPrimary,
+                            border: `1px solid ${colors.containerBorder}`,
+                          }}
+                        >
+                          Close
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                </div>
               </div>
-              <div className="flex-1 min-w-0">
-                <div className="text-[13px] font-medium" style={{ color: colors.textPrimary }}>
-                  Ask Imprint
+            ) : (
+              <div
+                className="mt-5 rounded-2xl p-4 flex items-start gap-3 shrink-0"
+                style={{ background: colors.surfacePrimary, border: `1px solid ${colors.containerBorder}` }}
+              >
+                <div
+                  className="w-10 h-10 rounded-2xl flex items-center justify-center shrink-0"
+                  style={{ background: colors.accentLight, color: colors.accent }}
+                >
+                  <Sparkle size={18} weight="fill" />
                 </div>
-                <div className="text-[12px] mt-1 mb-3 leading-6" style={{ color: colors.textSecondary }}>
-                  Query Gemini over the connected Gmail, Classroom, and Calendar context.
-                </div>
-                <div className="flex items-center gap-3">
-                  <input
-                    value={query}
-                    onChange={(e) => setQuery(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter' && !e.shiftKey) {
-                        e.preventDefault()
-                        void askAssistant()
-                      }
-                    }}
-                    placeholder="What should I focus on right now?"
-                    className="flex-1 h-12 px-4 rounded-xl text-[13px]"
+                <div className="flex-1 min-w-0">
+                  <div className="text-[13px] font-medium" style={{ color: colors.textPrimary }}>
+                    Ask Imprint
+                  </div>
+                  <div className="text-[12px] mt-1 mb-3 leading-6" style={{ color: colors.textSecondary }}>
+                    Query Gemini over your local student profile plus the connected Gmail, Classroom, and Calendar context.
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <input
+                      value={query}
+                      onChange={(e) => setQuery(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' && !e.shiftKey) {
+                          e.preventDefault()
+                          void askAssistant()
+                        }
+                      }}
+                      placeholder="What should I focus on right now?"
+                      className="flex-1 h-12 px-4 rounded-xl text-[13px]"
+                      style={{
+                        background: colors.containerBg,
+                        color: colors.textPrimary,
+                        border: `1px solid ${colors.containerBorder}`,
+                      }}
+                    />
+                    <button
+                      onClick={() => void askAssistant()}
+                      disabled={!snapshot || !query.trim() || busy !== 'idle'}
+                      className="h-12 px-4 rounded-xl text-[13px] font-medium"
+                      style={{
+                        background: colors.accent,
+                        color: colors.textOnAccent,
+                        opacity: !snapshot || !query.trim() || busy !== 'idle' ? 0.6 : 1,
+                      }}
+                    >
+                      {busy === 'asking' ? 'Asking...' : 'Ask'}
+                    </button>
+                  </div>
+                  <div
+                    className="mt-3 rounded-xl px-4 py-3 max-h-[160px] overflow-y-auto text-[12px] leading-6"
                     style={{
                       background: colors.containerBg,
-                      color: colors.textPrimary,
+                      color: assistantAnswer || busy === 'asking' ? colors.textPrimary : colors.textTertiary,
                       border: `1px solid ${colors.containerBorder}`,
                     }}
-                  />
-                  <button
-                    onClick={() => void askAssistant()}
-                    disabled={!snapshot || !query.trim() || busy !== 'idle'}
-                    className="h-12 px-4 rounded-xl text-[13px] font-medium"
-                    style={{
-                      background: colors.accent,
-                      color: colors.textOnAccent,
-                      opacity: !snapshot || !query.trim() || busy !== 'idle' ? 0.6 : 1,
-                    }}
                   >
-                    {busy === 'asking' ? 'Asking...' : 'Ask'}
-                  </button>
-                </div>
-                <div
-                  className="mt-3 rounded-xl px-4 py-3 max-h-[160px] overflow-y-auto text-[12px] leading-6"
-                  style={{
-                    background: colors.containerBg,
-                    color: assistantAnswer || busy === 'asking' ? colors.textPrimary : colors.textTertiary,
-                    border: `1px solid ${colors.containerBorder}`,
-                  }}
-                >
-                  {busy === 'asking'
-                    ? 'Thinking through your Gmail, Classroom, and Calendar context...'
-                    : assistantAnswer ? (
-                      <div className="prose-cloud conversation-selectable text-[12px] leading-6 [&>*:first-child]:mt-0 [&>*:last-child]:mb-0">
-                        <Markdown remarkPlugins={[remarkGfm]}>
-                          {assistantAnswer}
-                        </Markdown>
-                      </div>
-                    ) : 'No response yet. Try asking what you should focus on, what is pending, or which email matters most.'}
+                    {busy === 'asking'
+                      ? 'Thinking through your profile, Gmail, Classroom, and Calendar context...'
+                      : assistantAnswer ? (
+                        <div className="prose-cloud conversation-selectable text-[12px] leading-6 [&>*:first-child]:mt-0 [&>*:last-child]:mb-0">
+                          <Markdown remarkPlugins={[remarkGfm]}>
+                            {assistantAnswer}
+                          </Markdown>
+                        </div>
+                      ) : 'No response yet. Try asking what you should focus on, what is pending, or which email matters most.'}
+                  </div>
                 </div>
               </div>
-            </div>
+            )}
           </main>
         </div>
       </div>
     </div>
   )
+
+  function updateDraft<K extends keyof StudentProfileDraft>(key: K, value: StudentProfileDraft[K]) {
+    setProfileDraft((current) => ({ ...current, [key]: value }))
+  }
+
+  function hydrateProfile(profile: StudentProfile | null) {
+    setStudentProfile(profile)
+    if (profile) {
+      setProfileDraft(profileToDraft(profile))
+    } else {
+      setProfileDraft(EMPTY_PROFILE_DRAFT)
+    }
+  }
 }
 
 function InfoCard({
@@ -492,9 +711,25 @@ function InfoCard({
   )
 }
 
-function StatusPill({ configured, connected }: { configured: boolean; connected: boolean }) {
+function StatusPill({
+  configured,
+  connected,
+  configuredLabel,
+  connectedLabel,
+  missingLabel,
+}: {
+  configured: boolean
+  connected: boolean
+  configuredLabel?: string
+  connectedLabel?: string
+  missingLabel?: string
+}) {
   const colors = useColors()
-  const label = connected ? 'Connected' : configured ? 'Configured' : 'Missing env'
+  const label = connected
+    ? connectedLabel || 'Connected'
+    : configured
+      ? configuredLabel || 'Configured'
+      : missingLabel || 'Missing env'
   const tone = connected
     ? { bg: colors.statusCompleteBg, fg: colors.statusComplete }
     : configured
@@ -504,6 +739,71 @@ function StatusPill({ configured, connected }: { configured: boolean; connected:
     <div className="px-2.5 py-1 rounded-full text-[10px] font-medium" style={{ background: tone.bg, color: tone.fg }}>
       {label}
     </div>
+  )
+}
+
+function ProfileField({
+  label,
+  value,
+  onChange,
+  placeholder,
+}: {
+  label: string
+  value: string
+  onChange: (value: string) => void
+  placeholder: string
+}) {
+  const colors = useColors()
+  return (
+    <label className="block">
+      <div className="text-[11px] uppercase tracking-[0.14em] mb-2" style={{ color: colors.textTertiary }}>
+        {label}
+      </div>
+      <input
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder={placeholder}
+        className="w-full h-11 px-3 rounded-xl text-[13px]"
+        style={{
+          background: colors.containerBg,
+          color: colors.textPrimary,
+          border: `1px solid ${colors.containerBorder}`,
+        }}
+      />
+    </label>
+  )
+}
+
+function ProfileArea({
+  label,
+  value,
+  onChange,
+  placeholder,
+}: {
+  label: string
+  value: string
+  onChange: (value: string) => void
+  placeholder: string
+}) {
+  const colors = useColors()
+  return (
+    <label className="block">
+      <div className="text-[11px] uppercase tracking-[0.14em] mb-2" style={{ color: colors.textTertiary }}>
+        {label}
+      </div>
+      <textarea
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder={placeholder}
+        rows={4}
+        className="w-full px-3 py-3 rounded-xl text-[13px] resize-none"
+        style={{
+          background: colors.containerBg,
+          color: colors.textPrimary,
+          border: `1px solid ${colors.containerBorder}`,
+        }}
+      />
+    </label>
   )
 }
 
@@ -587,4 +887,39 @@ function formatDate(value: string): string {
 function formatDue(date?: string | null, time?: string | null): string {
   if (!date && !time) return 'No due date'
   return [date, time].filter(Boolean).join(' ')
+}
+
+function draftToProfile(draft: StudentProfileDraft): StudentProfile {
+  return {
+    full_name: draft.full_name.trim(),
+    degree_program: draft.degree_program.trim(),
+    semester: draft.semester.trim(),
+    top_priorities: splitList(draft.top_priorities),
+    must_not_ignore: splitList(draft.must_not_ignore),
+    important_courses: splitList(draft.important_courses),
+    default_help: draft.default_help.trim(),
+    reminder_style: draft.reminder_style.trim(),
+    output_style: draft.output_style.trim(),
+  }
+}
+
+function profileToDraft(profile: StudentProfile): StudentProfileDraft {
+  return {
+    full_name: profile.full_name,
+    degree_program: profile.degree_program,
+    semester: profile.semester,
+    top_priorities: profile.top_priorities.join(', '),
+    must_not_ignore: profile.must_not_ignore.join(', '),
+    important_courses: profile.important_courses.join(', '),
+    default_help: profile.default_help,
+    reminder_style: profile.reminder_style,
+    output_style: profile.output_style,
+  }
+}
+
+function splitList(value: string): string[] {
+  return value
+    .split(',')
+    .map((item) => item.trim())
+    .filter(Boolean)
 }

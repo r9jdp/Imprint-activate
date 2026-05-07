@@ -1,6 +1,7 @@
 mod agent;
 pub mod browser;
 mod google;
+mod profile;
 mod safety;
 mod tools;
 mod types;
@@ -23,6 +24,12 @@ struct GoogleConnectionStatus {
 struct WorkspaceAssistantRequest {
     query: String,
     snapshot: google::WorkspaceSnapshot,
+}
+
+#[derive(serde::Serialize)]
+struct StudentProfileStatus {
+    profile: Option<profile::StudentProfile>,
+    has_profile: bool,
 }
 
 #[derive(serde::Deserialize)]
@@ -366,6 +373,20 @@ async fn get_workspace_snapshot() -> Result<google::WorkspaceSnapshot, String> {
 }
 
 #[tauri::command]
+async fn get_student_profile() -> Result<StudentProfileStatus, String> {
+    let profile = profile::load()?;
+    Ok(StudentProfileStatus {
+        has_profile: profile.is_some(),
+        profile,
+    })
+}
+
+#[tauri::command]
+async fn save_student_profile(student_profile: profile::StudentProfile) -> Result<(), String> {
+    profile::save(&student_profile)
+}
+
+#[tauri::command]
 async fn ask_workspace_assistant(
     request: WorkspaceAssistantRequest,
 ) -> Result<String, String> {
@@ -385,16 +406,27 @@ async fn ask_workspace_assistant(
 
     let snapshot_json = serde_json::to_string_pretty(&request.snapshot)
         .map_err(|e| format!("Failed to serialize workspace snapshot: {}", e))?;
+    let profile_text = profile::load()?
+        .map(|student_profile| profile::to_user_md(&student_profile))
+        .unwrap_or_else(|| "No local student profile is configured yet.".to_string());
 
     let prompt = format!(
         "You are Imprint, a stateful student assistant.\n\
+         Use the local student profile only when it is directly relevant to the user's exact question.\n\
          Use the connected Gmail, Google Classroom, and Calendar context to answer the user's request.\n\
-         Prioritize clarity, actionability, and urgency.\n\
+         Answer only what the user asked. Do not add unrelated advice, extra categories, or extra tasks unless the user explicitly asked for them.\n\
+         Do not assume anything that is not explicitly present in the provided data.\n\
+         Do not invent defaults, statuses, labels, or conclusions that the data does not state.\n\
+         Do not claim the student is a defaulter, shortlisted, selected, rejected, or officially flagged unless the source data explicitly says so.\n\
+         If the evidence is indirect or incomplete, say that you cannot confirm it and briefly explain why.\n\
+         Separate confirmed facts from possible inferences when needed, but stay concise.\n\
          If asked what to focus on, rank tasks by urgency and student impact.\n\
          If asked to draft or summarize, ground the response in the workspace data only.\n\
-         Keep the answer concise and structured.\n\n\
+         Keep the answer concise, structured, and strictly grounded in the provided data.\n\n\
+         Local student profile:\n{}\n\n\
          Workspace snapshot:\n{}\n\n\
          User query:\n{}",
+        profile_text,
         snapshot_json,
         request.query.trim()
     );
@@ -528,6 +560,8 @@ pub fn run() {
                 sign_in_google,
                 disconnect_google,
                 get_workspace_snapshot,
+                get_student_profile,
+                save_student_profile,
                 ask_workspace_assistant,
                 get_scope_config,
                 set_scope_config,
