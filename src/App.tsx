@@ -70,16 +70,27 @@ type AgentEvent = {
   content: string
 }
 
+type ProfileDocument = {
+  name: string
+  path: string
+  mime_type: string
+  extracted_summary: string
+  extracted_text: string
+}
+
 type StudentProfile = {
   full_name: string
   degree_program: string
   semester: string
+  about_me: string
+  additional_context: string
   top_priorities: string[]
   must_not_ignore: string[]
   important_courses: string[]
   default_help: string
   reminder_style: string
   output_style: string
+  documents: ProfileDocument[]
 }
 
 type StudentProfileStatus = {
@@ -91,24 +102,30 @@ type StudentProfileDraft = {
   full_name: string
   degree_program: string
   semester: string
+  about_me: string
+  additional_context: string
   top_priorities: string
   must_not_ignore: string
   important_courses: string
   default_help: string
   reminder_style: string
   output_style: string
+  documents: ProfileDocument[]
 }
 
 const EMPTY_PROFILE_DRAFT: StudentProfileDraft = {
   full_name: '',
   degree_program: '',
   semester: '',
+  about_me: '',
+  additional_context: '',
   top_priorities: '',
   must_not_ignore: '',
   important_courses: '',
   default_help: '',
   reminder_style: '',
   output_style: '',
+  documents: [],
 }
 
 export default function App() {
@@ -116,7 +133,7 @@ export default function App() {
   const setThemeMode = useThemeStore((s) => s.setThemeMode)
   const [status, setStatus] = useState<GoogleConnectionStatus>({ configured: false, connected: false })
   const [snapshot, setSnapshot] = useState<WorkspaceSnapshot | null>(null)
-  const [busy, setBusy] = useState<'idle' | 'signing-in' | 'refreshing' | 'disconnecting' | 'asking' | 'saving-profile'>('idle')
+  const [busy, setBusy] = useState<'idle' | 'signing-in' | 'refreshing' | 'disconnecting' | 'asking' | 'saving-profile' | 'uploading-documents'>('idle')
   const [feedback, setFeedback] = useState('')
   const [error, setError] = useState('')
   const [query, setQuery] = useState('')
@@ -251,6 +268,38 @@ export default function App() {
     }
   }
 
+  async function uploadProfileDocuments() {
+    setBusy('uploading-documents')
+    setFeedback('')
+    setError('')
+    try {
+      const selectedFiles = await invoke<Array<{ path: string; name: string }>>('attach_files_command')
+      const paths = selectedFiles.map((file) => file.path).filter(Boolean)
+      if (paths.length === 0) {
+        return
+      }
+
+      const extracted = await invoke<ProfileDocument[]>('ingest_profile_documents', {
+        request: { paths },
+      })
+
+      const nextDraft = {
+        ...profileDraft,
+        documents: mergeDocuments(profileDraft.documents, extracted),
+      }
+      setProfileDraft(nextDraft)
+
+      const nextProfile = draftToProfile(nextDraft)
+      await invoke('save_student_profile', { studentProfile: nextProfile })
+      setStudentProfile(nextProfile)
+      setFeedback('Documents processed, extracted with Gemini, and saved into your local profile.')
+    } catch (e) {
+      setError(normalizeError(e))
+    } finally {
+      setBusy('idle')
+    }
+  }
+
   async function connectBrowser() {
     setBusy('refreshing')
     setFeedback('')
@@ -287,8 +336,6 @@ export default function App() {
     try {
       await invoke('browser_disconnect')
       setBrowserConnected(false)
-      setBrowserPageState(null)
-      setBrowserScreenshot('')
       setFeedback('Disconnected Imprint browser session.')
     } catch (e) {
       setError(normalizeError(e))
@@ -450,7 +497,7 @@ export default function App() {
               <div className="space-y-3">
                 <div className="text-[12px] leading-6" style={{ color: colors.textSecondary }}>
                   {studentProfile
-                    ? `Local memory is active for ${studentProfile.full_name || 'this student profile'}.`
+                    ? `Local memory is active for ${studentProfile.full_name || 'this student profile'} with ${studentProfile.documents.length} saved document${studentProfile.documents.length === 1 ? '' : 's'}.`
                     : 'Complete onboarding so Imprint can prioritize based on your goals, courses, and must-not-ignore signals.'}
                 </div>
                 <button
@@ -519,7 +566,7 @@ export default function App() {
             </div>
           </aside>
 
-          <main className="p-6 overflow-hidden flex flex-col">
+          <main className="p-6 overflow-y-auto overflow-x-hidden flex flex-col min-h-0">
             <div className="flex items-start justify-between gap-4 mb-5 shrink-0">
               <div>
                 <div className="text-[13px] uppercase tracking-[0.18em] mb-2" style={{ color: colors.textTertiary }}>
@@ -643,7 +690,7 @@ export default function App() {
 
             {showOnboarding ? (
               <div
-                className="mt-5 rounded-2xl p-5 shrink-0"
+                className="mt-5 rounded-2xl p-5 shrink-0 max-h-[70vh] overflow-y-auto"
                 style={{ background: colors.surfacePrimary, border: `1px solid ${colors.containerBorder}` }}
               >
                 <div className="flex items-start gap-3">
@@ -679,6 +726,18 @@ export default function App() {
                         value={profileDraft.semester}
                         onChange={(value) => updateDraft('semester', value)}
                         placeholder="6th semester"
+                      />
+                      <ProfileArea
+                        label="About you"
+                        value={profileDraft.about_me}
+                        onChange={(value) => updateDraft('about_me', value)}
+                        placeholder="Add anything about yourself that the agent should know directly."
+                      />
+                      <ProfileArea
+                        label="Extra context"
+                        value={profileDraft.additional_context}
+                        onChange={(value) => updateDraft('additional_context', value)}
+                        placeholder="Personal goals, constraints, writing preferences, internships, placements, anything useful."
                       />
                       <ProfileField
                         label="Default help mode"
@@ -718,6 +777,56 @@ export default function App() {
                         onChange={(value) => updateDraft('output_style', value)}
                         placeholder="Concise bullets with clear next actions"
                       />
+                    </div>
+                    <div className="mt-4 rounded-2xl p-4" style={{ background: colors.containerBg, border: `1px solid ${colors.containerBorder}` }}>
+                      <div className="flex items-start justify-between gap-3">
+                        <div>
+                          <div className="text-[13px] font-medium" style={{ color: colors.textPrimary }}>
+                            Profile documents
+                          </div>
+                          <div className="text-[12px] mt-1 leading-6" style={{ color: colors.textSecondary }}>
+                            Upload documents once. Imprint extracts the useful text with Gemini and stores it locally in your profile. The original documents are not resent on every query.
+                          </div>
+                        </div>
+                        <button
+                          onClick={() => void uploadProfileDocuments()}
+                          disabled={busy !== 'idle'}
+                          className="h-10 px-4 rounded-xl text-[12px] font-medium"
+                          style={{
+                            background: colors.surfaceSecondary,
+                            color: colors.textPrimary,
+                            border: `1px solid ${colors.containerBorder}`,
+                            opacity: busy !== 'idle' ? 0.6 : 1,
+                          }}
+                        >
+                          {busy === 'uploading-documents' ? 'Extracting...' : 'Upload documents'}
+                        </button>
+                      </div>
+                      <div className="mt-4 space-y-3 max-h-[260px] overflow-y-auto">
+                        {profileDraft.documents.length === 0 ? (
+                          <div className="text-[12px] leading-6" style={{ color: colors.textTertiary }}>
+                            No documents added yet.
+                          </div>
+                        ) : (
+                          profileDraft.documents.map((document) => (
+                            <div
+                              key={`${document.path}-${document.name}`}
+                              className="rounded-2xl p-3"
+                              style={{ background: colors.surfacePrimary, border: `1px solid ${colors.containerBorder}` }}
+                            >
+                              <div className="text-[13px] font-medium" style={{ color: colors.textPrimary }}>
+                                {document.name}
+                              </div>
+                              <div className="text-[11px] mt-1" style={{ color: colors.textTertiary }}>
+                                {document.mime_type || 'document'}
+                              </div>
+                              <div className="text-[12px] mt-2 leading-6" style={{ color: colors.textSecondary }}>
+                                {document.extracted_summary || 'No extracted summary available.'}
+                              </div>
+                            </div>
+                          ))
+                        )}
+                      </div>
                     </div>
                     <div className="mt-4 flex items-center gap-3">
                       <button
@@ -1077,12 +1186,15 @@ function draftToProfile(draft: StudentProfileDraft): StudentProfile {
     full_name: draft.full_name.trim(),
     degree_program: draft.degree_program.trim(),
     semester: draft.semester.trim(),
+    about_me: draft.about_me.trim(),
+    additional_context: draft.additional_context.trim(),
     top_priorities: splitList(draft.top_priorities),
     must_not_ignore: splitList(draft.must_not_ignore),
     important_courses: splitList(draft.important_courses),
     default_help: draft.default_help.trim(),
     reminder_style: draft.reminder_style.trim(),
     output_style: draft.output_style.trim(),
+    documents: draft.documents,
   }
 }
 
@@ -1091,12 +1203,15 @@ function profileToDraft(profile: StudentProfile): StudentProfileDraft {
     full_name: profile.full_name,
     degree_program: profile.degree_program,
     semester: profile.semester,
+    about_me: profile.about_me,
+    additional_context: profile.additional_context,
     top_priorities: profile.top_priorities.join(', '),
     must_not_ignore: profile.must_not_ignore.join(', '),
     important_courses: profile.important_courses.join(', '),
     default_help: profile.default_help,
     reminder_style: profile.reminder_style,
     output_style: profile.output_style,
+    documents: profile.documents,
   }
 }
 
@@ -1117,6 +1232,9 @@ function buildStudentAgentPrompt(query: string, snapshot: WorkspaceSnapshot, pro
   return [
     'You are Imprint, a stateful student agent.',
     'Use the provided local student profile and live Workspace snapshot as context.',
+    'For Gmail, Google Classroom, Google Calendar, Google Docs, and Google Drive questions, use the Workspace snapshot and structured data first.',
+    'If the user is only asking for information that is already available in the snapshot, answer directly without opening Chrome.',
+    'Only use browser_* tools when the user explicitly wants a browser action, when page interaction is required, or when the provided data is insufficient to answer correctly.',
     'If the user request requires opening pages, navigating, clicking, typing, inspecting browser state, or interacting with web apps, use the browser_* tools yourself.',
     'When the Workspace snapshot already contains direct links such as Gmail message links, Classroom course links, Classroom assignment links, or Calendar event links, navigate to those links first instead of opening a homepage and searching visually.',
     'Do not ask the user to manually inspect elements or provide selectors unless absolutely necessary.',
@@ -1148,4 +1266,15 @@ function summarizeToolResult(raw: string): string {
   const trimmed = raw.trim()
   if (!trimmed) return ''
   return trimmed.length > 140 ? `${trimmed.slice(0, 137)}...` : trimmed
+}
+
+function mergeDocuments(current: ProfileDocument[], incoming: ProfileDocument[]): ProfileDocument[] {
+  const byPath = new Map<string, ProfileDocument>()
+  for (const document of current) {
+    byPath.set(document.path, document)
+  }
+  for (const document of incoming) {
+    byPath.set(document.path, document)
+  }
+  return Array.from(byPath.values())
 }

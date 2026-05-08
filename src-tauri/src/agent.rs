@@ -693,6 +693,8 @@ fn build_system_prompt() -> String {
          - browser_evaluate(expression): Run JavaScript on the page (advanced).\n\
          APPROACH: Navigate first, then call browser_get_page_state. The screenshot will have orange numbered labels on interactive elements. Use those numbers with browser_click (e.g. browser_click(selector=\"7\")) — this is the MOST RELIABLE method. You can also use element names from the elements list.\n\
          CRITICAL BROWSER RULES:\n\
+         - For Gmail, Google Classroom, Google Calendar, Google Docs, and Google Drive tasks: prefer structured API/data context first when it is already available in the prompt or workspace snapshot. Do NOT open Chrome for a read/query task if the answer can be derived directly from provided data.\n\
+         - Use browser tools for Google products only when the user explicitly wants a browser action, when a page must be interacted with, or when the provided API/data context is insufficient.\n\
          - For ANY web or browser task, call browser_navigate as the VERY FIRST tool call. No other tool before it.\n\
          - If the user context or provided data already contains a direct URL for the target page, use browser_navigate with that exact URL FIRST. Do not open a homepage and hunt visually when a direct link is available.\n\
          - NEVER use shell_exec to open, launch, restart, or kill Chrome. Not 'open -a Google Chrome', not pkill, not killall. Nothing.\n\

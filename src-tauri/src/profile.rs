@@ -2,16 +2,28 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ProfileDocument {
+    pub name: String,
+    pub path: String,
+    pub mime_type: String,
+    pub extracted_summary: String,
+    pub extracted_text: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct StudentProfile {
     pub full_name: String,
     pub degree_program: String,
     pub semester: String,
+    pub about_me: String,
+    pub additional_context: String,
     pub top_priorities: Vec<String>,
     pub must_not_ignore: Vec<String>,
     pub important_courses: Vec<String>,
     pub default_help: String,
     pub reminder_style: String,
     pub output_style: String,
+    pub documents: Vec<ProfileDocument>,
 }
 
 fn storage_dir() -> Result<PathBuf, String> {
@@ -59,6 +71,10 @@ pub fn to_user_md(profile: &StudentProfile) -> String {
 - Name: {}\n\
 - Degree / Program: {}\n\
 - Semester / Year: {}\n\n\
+## Personal Details\n\
+{}\n\n\
+## Extra Context\n\
+{}\n\n\
 ## Top Priorities\n{}\n\n\
 ## Must-Not-Ignore Signals\n{}\n\n\
 ## Important Courses\n{}\n\n\
@@ -67,16 +83,21 @@ pub fn to_user_md(profile: &StudentProfile) -> String {
 ## Reminder Style\n\
 - {}\n\n\
 ## Output Style\n\
-- {}\n",
+- {}\n\n\
+## Uploaded Documents\n\
+{}\n",
         value_or_placeholder(&profile.full_name),
         value_or_placeholder(&profile.degree_program),
         value_or_placeholder(&profile.semester),
+        multiline_or_placeholder(&profile.about_me),
+        multiline_or_placeholder(&profile.additional_context),
         render_list(&profile.top_priorities),
         render_list(&profile.must_not_ignore),
         render_list(&profile.important_courses),
         value_or_placeholder(&profile.default_help),
         value_or_placeholder(&profile.reminder_style),
         value_or_placeholder(&profile.output_style),
+        render_documents(&profile.documents),
     )
 }
 
@@ -99,4 +120,34 @@ fn value_or_placeholder(value: &str) -> String {
     } else {
         trimmed.to_string()
     }
+}
+
+fn multiline_or_placeholder(value: &str) -> String {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        "Not set yet".to_string()
+    } else {
+        trimmed.to_string()
+    }
+}
+
+fn render_documents(documents: &[ProfileDocument]) -> String {
+    if documents.is_empty() {
+        return "- No documents uploaded yet".to_string();
+    }
+
+    documents
+        .iter()
+        .map(|doc| {
+            format!(
+                "### {}\n- Source: {}\n- Mime: {}\n- Summary: {}\n\n#### Extracted Text\n{}\n",
+                doc.name,
+                value_or_placeholder(&doc.path),
+                value_or_placeholder(&doc.mime_type),
+                value_or_placeholder(&doc.extracted_summary),
+                multiline_or_placeholder(&doc.extracted_text),
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }

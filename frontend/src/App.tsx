@@ -1,3 +1,4 @@
+import { useEffect } from 'react'
 import { SectionHeader } from './components/SectionHeader'
 import {
   capabilities,
@@ -7,7 +8,37 @@ import {
   workflow,
 } from './data/siteContent'
 
+const heroSignals = [
+  {
+    label: 'Real working context',
+    text: 'Files, browser state, and active task stay inside the loop.',
+  },
+  {
+    label: 'Built for ongoing work',
+    text: 'Useful across assignments, essays, applications, and repeated admin.',
+  },
+] as const
+
 export default function App() {
+  useEffect(() => {
+    const elements = Array.from(document.querySelectorAll<HTMLElement>('[data-reveal]'))
+    const observer = new IntersectionObserver(
+      (entries) => {
+        entries.forEach((entry) => {
+          if (entry.isIntersecting) {
+            entry.target.classList.add('is-visible')
+            observer.unobserve(entry.target)
+          }
+        })
+      },
+      { threshold: 0.16, rootMargin: '0px 0px -8% 0px' },
+    )
+
+    elements.forEach((element) => observer.observe(element))
+
+    return () => observer.disconnect()
+  }, [])
+
   return (
     <div className="page-shell">
       <div className="background-haze haze-left" />
@@ -24,8 +55,8 @@ export default function App() {
 
         <nav className="topnav" aria-label="Page">
           <a href="#product">Product</a>
-          <a href="#statefulness">State</a>
           <a href="#demo">Demo</a>
+          <a href="#statefulness">State</a>
           <a className="topnav-cta" href="#download">
             Download
           </a>
@@ -33,32 +64,65 @@ export default function App() {
       </header>
 
       <main className="content">
-        <section className="hero panel" id="product">
+        <section className="hero-stage panel" id="product" data-reveal>
           <div className="hero-copy">
-            <p className="eyebrow">Submission Overview</p>
-            <h1>Imprint helps students finish real work without losing context.</h1>
-            <p className="hero-text">
-              It runs locally, works against the real workspace, and keeps enough state to stay useful across
-              long-running academic tasks.
+            <p className="eyebrow intro-line intro-1">Submission Overview</p>
+            <h1 className="intro-line intro-2">Imprint helps students keep momentum across real work.</h1>
+            <p className="hero-text intro-line intro-3">
+              A local-first agent that acts on the real machine, keeps working state between sessions, and
+              supports long-running academic tasks instead of isolated prompts.
             </p>
 
-            <div className="hero-actions">
+            <div className="hero-actions intro-line intro-4">
               <a className="primary-button" href="#download">
                 Download Imprint
               </a>
               <a className="secondary-button" href="#demo">
-                Demo video
+                Watch demo
               </a>
             </div>
 
-            <div className="hero-tags" aria-label="Product traits">
+            <div className="hero-tags intro-line intro-5" aria-label="Product traits">
               {heroTags.map((tag) => (
                 <span key={tag}>{tag}</span>
               ))}
             </div>
+
+            <div className="hero-signals intro-line intro-6">
+              {heroSignals.map((item) => (
+                <article className="signal-card" key={item.label}>
+                  <p className="micro-label">{item.label}</p>
+                  <p>{item.text}</p>
+                </article>
+              ))}
+            </div>
           </div>
 
-          <div className="hero-shell">
+          <div className="hero-media">
+            <section className="video-card" id="demo">
+              <div className="video-card-header">
+                <div>
+                  <p className="eyebrow">Demo Video</p>
+                  <p className="video-title">Temporary YouTube embed placeholder</p>
+                </div>
+                <span className="inline-note">Replace URL later</span>
+              </div>
+
+              <div className="video-frame">
+                <iframe
+                  src="https://www.youtube.com/embed/dQw4w9WgXcQ?rel=0"
+                  title="Imprint demo placeholder video"
+                  allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+                  referrerPolicy="strict-origin-when-cross-origin"
+                  allowFullScreen
+                />
+              </div>
+
+              <p className="video-note">
+                Swap the iframe `src` in `frontend/src/App.tsx` when the real product demo is ready.
+              </p>
+            </section>
+
             <div className="shell-window">
               <div className="shell-tabs">
                 <span className="shell-tab active">essay-draft</span>
@@ -108,7 +172,7 @@ export default function App() {
           </div>
         </section>
 
-        <section className="product-grid">
+        <section className="product-grid" data-reveal>
           <article className="panel compact-panel">
             <SectionHeader
               eyebrow="What Imprint Is"
@@ -132,7 +196,7 @@ export default function App() {
           </article>
         </section>
 
-        <section className="panel">
+        <section className="panel feature-panel" data-reveal>
           <SectionHeader eyebrow="Key Capabilities" title="Built to move work forward." />
           <div className="capability-grid">
             {capabilities.map((item) => (
@@ -145,7 +209,7 @@ export default function App() {
           </div>
         </section>
 
-        <section className="state-grid" id="statefulness">
+        <section className="state-grid" id="statefulness" data-reveal>
           <article className="panel">
             <SectionHeader
               eyebrow="Why Statefulness Matters"
@@ -176,7 +240,7 @@ export default function App() {
           </article>
         </section>
 
-        <section className="panel">
+        <section className="panel feature-panel" data-reveal>
           <SectionHeader eyebrow="How It Works" title="Observe, reason, execute, and carry context forward." />
           <div className="workflow-grid">
             {workflow.map((item) => (
@@ -189,21 +253,7 @@ export default function App() {
           </div>
         </section>
 
-        <section className="panel demo-panel" id="demo">
-          <SectionHeader eyebrow="Demo Video" title="Replace this placeholder with the recorded walkthrough." />
-          <div className="video-placeholder">
-            <div className="video-badge">Demo</div>
-            <div className="video-copy">
-              <p className="video-title">Embed placeholder</p>
-              <p className="video-text">
-                Swap this block for an `iframe` or `video` element when the final recording is ready.
-              </p>
-              <code className="inline-note">frontend/src/App.tsx contains the placeholder markup.</code>
-            </div>
-          </div>
-        </section>
-
-        <section className="panel download-panel" id="download">
+        <section className="panel download-panel" id="download" data-reveal>
           <div>
             <SectionHeader eyebrow="Download" title="Point this to the final submission artifact." />
             <p className="section-text">

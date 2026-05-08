@@ -33,6 +33,11 @@ struct StudentProfileStatus {
 }
 
 #[derive(serde::Deserialize)]
+struct ProfileDocumentIngestRequest {
+    paths: Vec<String>,
+}
+
+#[derive(serde::Deserialize)]
 struct GcpServiceAccountKey {
     client_email: String,
     private_key: String,
@@ -414,6 +419,27 @@ async fn save_student_profile(student_profile: profile::StudentProfile) -> Resul
 }
 
 #[tauri::command]
+async fn ingest_profile_documents(
+    request: ProfileDocumentIngestRequest,
+) -> Result<Vec<profile::ProfileDocument>, String> {
+    let api_key = env!("GEMINI_API_KEY");
+    if api_key.trim().is_empty() {
+        return Err("GEMINI_API_KEY is missing. Add it to src-tauri/.env and rebuild the app.".to_string());
+    }
+
+    if request.paths.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let mut documents = Vec::new();
+    for path in request.paths {
+        documents.push(extract_profile_document(&path, api_key).await?);
+    }
+
+    Ok(documents)
+}
+
+#[tauri::command]
 async fn ask_workspace_assistant(
     request: WorkspaceAssistantRequest,
 ) -> Result<String, String> {
@@ -427,7 +453,7 @@ async fn ask_workspace_assistant(
     }
 
     let url = format!(
-        "https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key={}",
+        "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={}",
         api_key
     );
 
@@ -589,6 +615,7 @@ pub fn run() {
                 get_workspace_snapshot,
                 get_student_profile,
                 save_student_profile,
+                ingest_profile_documents,
                 ask_workspace_assistant,
                 get_scope_config,
                 set_scope_config,
@@ -609,4 +636,122 @@ pub fn run() {
             ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+async fn extract_profile_document(
+    path: &str,
+    api_key: &str,
+) -> Result<profile::ProfileDocument, String> {
+    let path_buf = std::path::PathBuf::from(path);
+    let name = path_buf
+        .file_name()
+        .and_then(|value| value.to_str())
+        .unwrap_or("document")
+        .to_string();
+
+    let mime_type = mime_guess::from_path(&path_buf)
+        .first_or_octet_stream()
+        .essence_str()
+        .to_string();
+
+    let bytes = std::fs::read(&path_buf)
+        .map_err(|e| format!("Failed to read {}: {}", path_buf.display(), e))?;
+
+    let text_extensions = ["txt", "md", "json", "csv", "rs", "ts", "tsx", "js", "jsx", "py", "java", "c", "cpp", "html", "css"];
+    let extension = path_buf
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .unwrap_or("")
+        .to_lowercase();
+
+    let prompt = "Extract profile-relevant information from this personal document for a local student agent. Return valid JSON with keys `summary` and `text`. `summary` should be a concise note about what this document adds to the user's profile. `text` should contain the extracted text or the most relevant readable content from the document. Do not invent facts. Preserve only what is present in the document.";
+
+    let payload = if text_extensions.contains(&extension.as_str()) || mime_type.starts_with("text/") || mime_type == "application/json" {
+        let text = String::from_utf8_lossy(&bytes).to_string();
+        serde_json::json!({
+            "contents": [{
+                "role": "user",
+                "parts": [
+                    { "text": prompt },
+                    { "text": format!("Document name: {}\n\nDocument content:\n{}", name, text) }
+                ]
+            }],
+            "generationConfig": { "temperature": 0.1 }
+        })
+    } else {
+        let b64 = {
+            use base64::Engine;
+            base64::engine::general_purpose::STANDARD.encode(&bytes)
+        };
+
+        serde_json::json!({
+            "contents": [{
+                "role": "user",
+                "parts": [
+                    { "text": prompt },
+                    {
+                        "inlineData": {
+                            "mimeType": mime_type,
+                            "data": b64
+                        }
+                    }
+                ]
+            }],
+            "generationConfig": { "temperature": 0.1 }
+        })
+    };
+
+    let client = reqwest::Client::new();
+    let response = client
+        .post(format!(
+            "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={}",
+            api_key
+        ))
+        .json(&payload)
+        .send()
+        .await
+        .map_err(|e| format!("Gemini document extraction failed for {}: {}", name, e))?;
+
+    let status = response.status();
+    let body: serde_json::Value = response
+        .json()
+        .await
+        .map_err(|e| format!("Failed to parse Gemini document extraction response: {}", e))?;
+
+    if !status.is_success() {
+        let msg = body["error"]["message"]
+            .as_str()
+            .unwrap_or("Gemini returned an error");
+        return Err(format!("Gemini extraction error ({}): {}", status, msg));
+    }
+
+    let raw_text = body["candidates"][0]["content"]["parts"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|part| part["text"].as_str())
+        .collect::<Vec<_>>()
+        .join("\n")
+        .trim()
+        .to_string();
+
+    let parsed = parse_profile_document_response(&raw_text).unwrap_or_else(|| {
+        serde_json::json!({
+            "summary": format!("Extracted content from {}", name),
+            "text": raw_text,
+        })
+    });
+
+    Ok(profile::ProfileDocument {
+        name,
+        path: path.to_string(),
+        mime_type,
+        extracted_summary: parsed["summary"].as_str().unwrap_or_default().trim().to_string(),
+        extracted_text: parsed["text"].as_str().unwrap_or_default().trim().to_string(),
+    })
+}
+
+fn parse_profile_document_response(raw: &str) -> Option<serde_json::Value> {
+    let cleaned = raw.trim().trim_start_matches("```json").trim_start_matches("```").trim_end_matches("```").trim();
+    serde_json::from_str::<serde_json::Value>(cleaned).ok()
 }

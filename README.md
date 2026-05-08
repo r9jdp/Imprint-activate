@@ -160,7 +160,7 @@ The current implementation now includes:
 
 The current Gemini assistant call uses:
 
-- `gemini-3-flash-preview`
+- `gemini-2.5-flash`
 
 Still intentionally pending:
 
