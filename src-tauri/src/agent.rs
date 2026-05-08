@@ -36,6 +36,7 @@ fn tool_category(name: &str) -> &'static str {
         "browser"
     } else {
         match name {
+            "google_docs_create_document" => "workspace",
             "read_file" | "list_dir" | "create_dir" | "move_file" | "delete_file" | "open_path" => "filesystem",
             "shell_exec" => "shell",
             "keyboard_type" | "keyboard_hotkey" => "keyboard",
@@ -694,6 +695,7 @@ fn build_system_prompt() -> String {
          APPROACH: Navigate first, then call browser_get_page_state. The screenshot will have orange numbered labels on interactive elements. Use those numbers with browser_click (e.g. browser_click(selector=\"7\")) — this is the MOST RELIABLE method. You can also use element names from the elements list.\n\
          CRITICAL BROWSER RULES:\n\
          - For Gmail, Google Classroom, Google Calendar, Google Docs, and Google Drive tasks: prefer structured API/data context first when it is already available in the prompt or workspace snapshot. Do NOT open Chrome for a read/query task if the answer can be derived directly from provided data.\n\
+         - For Google Doc creation or assignment drafting tasks, use the direct Google Docs API tool first. Do NOT type large document bodies into the browser editor when the Docs API can create and write the document directly.\n\
          - Use browser tools for Google products only when the user explicitly wants a browser action, when a page must be interacted with, or when the provided API/data context is insufficient.\n\
          - For ANY web or browser task, call browser_navigate as the VERY FIRST tool call. No other tool before it.\n\
          - If the user context or provided data already contains a direct URL for the target page, use browser_navigate with that exact URL FIRST. Do not open a homepage and hunt visually when a direct link is available.\n\
@@ -744,7 +746,29 @@ fn build_system_prompt() -> String {
 }
 
 
-fn build_tools_declaration() -> Value {
+fn lower_schema_types(value: Value) -> Value {
+    match value {
+        Value::Object(map) => {
+            let mut normalized = serde_json::Map::new();
+            for (key, child) in map {
+                if key == "type" {
+                    if let Some(type_name) = child.as_str() {
+                        normalized.insert(key, Value::String(type_name.to_lowercase()));
+                    } else {
+                        normalized.insert(key, lower_schema_types(child));
+                    }
+                } else {
+                    normalized.insert(key, lower_schema_types(child));
+                }
+            }
+            Value::Object(normalized)
+        }
+        Value::Array(items) => Value::Array(items.into_iter().map(lower_schema_types).collect()),
+        other => other,
+    }
+}
+
+fn build_tools_declaration() -> Vec<Value> {
     let mut function_declarations = vec![
         // ─── Computer Use Tools (highest priority) ───
         json!({
@@ -930,6 +954,19 @@ fn build_tools_declaration() -> Value {
 
     // ─── Browser Automation Tools ───
     function_declarations.push(json!({
+        "name": "google_docs_create_document",
+        "description": "Create a Google Doc directly through the Google Docs API and write the provided content into the body. Prefer this for assignment drafts, notes, outlines, and long-form content instead of typing into the browser editor.",
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {
+                "title": { "type": "STRING", "description": "Document title to create in Google Docs" },
+                "content": { "type": "STRING", "description": "Full body content to insert into the document" },
+                "open_after_create": { "type": "BOOLEAN", "description": "Whether to open the created document in the browser after writing it (default: true)" }
+            },
+            "required": ["title", "content"]
+        }
+    }));
+    function_declarations.push(json!({
         "name": "browser_navigate",
         "description": "Navigate the browser to a URL. Connects to Chrome automatically on first use. Use this to open web pages for research, form filling, or web automation.",
         "parameters": {
@@ -1033,7 +1070,16 @@ fn build_tools_declaration() -> Value {
         }
     }));
 
-    json!([{ "functionDeclarations": function_declarations }])
+    function_declarations
+        .into_iter()
+        .map(|tool| {
+            json!({
+                "name": tool["name"],
+                "description": tool["description"],
+                "input_schema": lower_schema_types(tool["parameters"].clone())
+            })
+        })
+        .collect()
 }
 
 pub async fn run_agent(
@@ -1047,38 +1093,21 @@ pub async fn run_agent(
     browser_state: State<'_, crate::browser::BrowserState>,
 ) -> Result<(), String> {
     let client = reqwest::Client::new();
-
-    // API key is baked into the binary at compile time via build.rs reading the .env file.
-    let api_key = env!("GEMINI_API_KEY");
-    if api_key.is_empty() {
-        return Err("GEMINI_API_KEY was not set at compile time. Add it to src-tauri/.env and rebuild.".to_string());
-    }
-
-    let url = format!(
-        "https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key={}",
-        api_key
-    );
-
+    let api_key = read_runtime_env("ANTHROPIC_API_KEY")
+        .ok_or_else(|| "ANTHROPIC_API_KEY is missing. Add it to src-tauri/.env and restart the app.".to_string())?;
+    let model = read_runtime_env("ANTHROPIC_MODEL")
+        .unwrap_or_else(|| "claude-sonnet-4-20250514".to_string());
+    let url = "https://api.anthropic.com/v1/messages";
     let system_prompt = build_system_prompt();
-    let system_instruction = json!({
-        "parts": [{ "text": system_prompt }]
-    });
-
     let tools = build_tools_declaration();
-    
-    let mut contents = history;
-
-    // If history is empty, add the initial user prompt.
-    // If it's not empty, the caller should have already appended the message to the session,
-    // and clui-shim will pass it in.
-    if contents.is_empty() {
-        contents.push(json!({ "role": "user", "parts": [{ "text": prompt }] }));
+    let mut messages = if history.is_empty() {
+        vec![json!({
+            "role": "user",
+            "content": [{ "type": "text", "text": prompt }]
+        })]
     } else {
-        // If clui-shim is passing history correctly, the last message in history
-        // is likely the current prompt. Let's verify or append as needed.
-        // For simplicity with clui-shim's current logic, we'll assume clui-shim 
-        // includes the current prompt in the history it sends.
-    }
+        history
+    };
     // Clear undo stack at start of each run so the undo button always targets THIS run
     undo_stack.clear();
 
@@ -1138,18 +1167,17 @@ pub async fn run_agent(
         }
 
         let body = json!({
-            "systemInstruction": system_instruction,
+            "model": model,
+            "max_tokens": 4096,
+            "system": system_prompt,
             "tools": tools,
-            "contents": contents,
-            "generationConfig": {
-                "thinkingConfig": {
-                    "includeThoughts": true
-                }
-            }
+            "messages": messages
         });
 
         let response = client
-            .post(&url)
+            .post(url)
+            .header("x-api-key", &api_key)
+            .header("anthropic-version", "2023-06-01")
             .json(&body)
             .send()
             .await
@@ -1161,7 +1189,7 @@ pub async fn run_agent(
         if let Some(err) = data.get("error") {
             let msg = err["message"]
                 .as_str()
-                .unwrap_or("Gemini API error")
+                .unwrap_or("Anthropic API error")
                 .to_string();
             window
                 .emit(
@@ -1178,47 +1206,36 @@ pub async fn run_agent(
             return Err(msg);
         }
 
-        let parts = data["candidates"][0]["content"]["parts"]
+        let parts = data["content"]
             .as_array()
             .cloned()
             .unwrap_or_default();
-
-        // Surface model thoughts to the UI when available.
-        let thought_text = parts
+        let pre_tool_text = parts
             .iter()
-            .filter_map(|p| {
-                let is_thought = p
-                    .get("thought")
-                    .and_then(|v| v.as_bool())
-                    .unwrap_or(false);
-                if is_thought {
-                    p.get("text").and_then(|v| v.as_str())
-                } else {
-                    None
-                }
-            })
+            .filter(|p| p["type"].as_str() == Some("text"))
+            .filter_map(|p| p["text"].as_str())
             .collect::<Vec<_>>()
-            .join("\n");
-        if !thought_text.trim().is_empty() {
+            .join("\n")
+            .trim()
+            .to_string();
+        if !pre_tool_text.is_empty() && data["stop_reason"].as_str() == Some("tool_use") {
             window
                 .emit(
                     "agent_event",
                     AgentEvent {
                         kind: "reasoning".into(),
-                        content: thought_text,
+                        content: pre_tool_text.clone(),
                     },
                 )
                 .ok();
         }
 
-        // Append model turn to contents
-        contents.push(json!({
-            "role": "model",
-            "parts": parts
+        messages.push(json!({
+            "role": "assistant",
+            "content": parts
         }));
 
-        // Check if any part is a functionCall
-        let has_tool_calls = parts.iter().any(|p| p.get("functionCall").is_some());
+        let has_tool_calls = parts.iter().any(|p| p["type"].as_str() == Some("tool_use"));
 
         if has_tool_calls {
             use std::hash::{Hash, Hasher};
@@ -1226,8 +1243,8 @@ pub async fn run_agent(
 
             let mut current_action_summary = String::new();
             for part in &parts {
-                if let Some(fc) = part.get("functionCall") {
-                    current_action_summary.push_str(&fc.to_string());
+                if part["type"].as_str() == Some("tool_use") {
+                    current_action_summary.push_str(&part.to_string());
                 }
             }
             let mut hasher = DefaultHasher::new();
@@ -1254,55 +1271,59 @@ pub async fn run_agent(
                     .ok();
                 
                 // Return tool result informing model of failure
-                contents.push(json!({
+                let tool_use_id = parts
+                    .iter()
+                    .find(|p| p["type"].as_str() == Some("tool_use"))
+                    .and_then(|p| p["id"].as_str())
+                    .unwrap_or("unknown");
+                messages.push(json!({
                     "role": "user",
-                    "parts": [{
-                        "functionResponse": {
-                            "name": parts[0].get("functionCall").and_then(|fc| fc.get("name")).and_then(|n| n.as_str()).unwrap_or("unknown"),
-                            "response": { "output": msg }
-                        }
+                    "content": [{
+                        "type": "tool_result",
+                        "tool_use_id": tool_use_id,
+                        "content": msg,
+                        "is_error": true
                     }]
                 }));
                 continue;
             }
 
-            // Collect all function responses in one turn
+            // Collect all tool results in one turn
             let mut function_responses: Vec<Value> = vec![];
 
             for part in &parts {
-                if let Some(fc) = part.get("functionCall") {
-                    let name = fc["name"].as_str().unwrap_or("");
-                    let args = &fc["args"];
+                if part["type"].as_str() == Some("tool_use") {
+                    let name = part["name"].as_str().unwrap_or("");
+                    let args = &part["input"];
+                    let tool_use_id = part["id"].as_str().unwrap_or("");
 
                     // Guardrail: avoid opening multiple file manager windows for a single request.
                     if name == "open_path" {
                         let requested = args["path"].as_str().unwrap_or("").trim().to_string();
                         if requested.is_empty() {
                             function_responses.push(json!({
-                                "functionResponse": {
-                                    "name": name,
-                                    "response": { "output": "error: open_path requires a non-empty path" }
-                                }
+                                "type": "tool_result",
+                                "tool_use_id": tool_use_id,
+                                "content": "error: open_path requires a non-empty path",
+                                "is_error": true
                             }));
                             continue;
                         }
 
                         if opened_paths.contains(&requested) {
                             function_responses.push(json!({
-                                "functionResponse": {
-                                    "name": name,
-                                    "response": { "output": format!("skipped: path already opened in this request ({})", requested) }
-                                }
+                                "type": "tool_result",
+                                "tool_use_id": tool_use_id,
+                                "content": format!("skipped: path already opened in this request ({})", requested)
                             }));
                             continue;
                         }
 
                         if open_path_calls >= 1 {
                             function_responses.push(json!({
-                                "functionResponse": {
-                                    "name": name,
-                                    "response": { "output": "skipped: open_path already used once in this request" }
-                                }
+                                "type": "tool_result",
+                                "tool_use_id": tool_use_id,
+                                "content": "skipped: open_path already used once in this request"
                             }));
                             continue;
                         }
@@ -1375,10 +1396,10 @@ pub async fn run_agent(
                             )
                             .ok();
                         function_responses.push(json!({
-                            "functionResponse": {
-                                "name": name,
-                                "response": { "output": format!("error: {}", block_msg) }
-                            }
+                            "type": "tool_result",
+                            "tool_use_id": tool_use_id,
+                            "content": format!("error: {}", block_msg),
+                            "is_error": true
                         }));
                         continue;
                     }
@@ -1455,10 +1476,10 @@ pub async fn run_agent(
                                 )
                                 .ok();
                             function_responses.push(json!({
-                                "functionResponse": {
-                                    "name": name,
-                                    "response": { "output": format!("error: {}", reject_msg) }
-                                }
+                                "type": "tool_result",
+                                "tool_use_id": tool_use_id,
+                                "content": format!("error: {}", reject_msg),
+                                "is_error": true
                             }));
                             continue;
                         }
@@ -1488,10 +1509,10 @@ pub async fn run_agent(
                                 )
                                 .ok();
                             function_responses.push(json!({
-                                "functionResponse": {
-                                    "name": name,
-                                    "response": { "output": "error: Do not use shell commands to open or kill Chrome. Call browser_navigate directly — it manages Chrome automatically." }
-                                }
+                                "type": "tool_result",
+                                "tool_use_id": tool_use_id,
+                                "content": "error: Do not use shell commands to open or kill Chrome. Call browser_navigate directly — it manages Chrome automatically.",
+                                "is_error": true
                             }));
                             continue;
                         }
@@ -1504,6 +1525,13 @@ pub async fn run_agent(
                     // Execute the tool (no artificial delays — runs at full OS speed)
                     let result = if name.starts_with("browser_") {
                         crate::browser::actions::dispatch_browser_tool(name, args, &browser_state).await
+                    } else if name == "google_docs_create_document" {
+                        crate::google::create_doc_with_content(
+                            args["title"].as_str().unwrap_or("Untitled document"),
+                            args["content"].as_str().unwrap_or(""),
+                            args["open_after_create"].as_bool().unwrap_or(true),
+                        )
+                        .await
                     } else if name == "computer_use" {
                         let task = args["task"].as_str().unwrap_or("");
                         let config = build_computer_use_config(task, args);
@@ -1568,64 +1596,67 @@ pub async fn run_agent(
                     let output_str = result.unwrap_or_else(|e| format!("error: {}", e));
                     previous_tool_context = Some((human_desc.clone(), current_category));
 
-                    // ── Vision: if the tool returned a screenshot, send as inline image ──
+                    // ── Vision: if the tool returned a screenshot, send as nested image content ──
                     if output_str.starts_with("SCREENSHOT_BASE64:") {
-                        // Pure screenshot (e.g. screenshot tool, browser_screenshot)
                         let b64_data = &output_str["SCREENSHOT_BASE64:".len()..];
                         function_responses.push(json!({
-                            "functionResponse": {
-                                "name": name,
-                                "response": {
-                                    "output": "Screenshot captured. Analyze the image to identify UI elements, their positions, and decide next actions."
+                            "type": "tool_result",
+                            "tool_use_id": tool_use_id,
+                            "content": [
+                                {
+                                    "type": "text",
+                                    "text": "Screenshot captured. Analyze the image to identify UI elements, their positions, and decide next actions."
+                                },
+                                {
+                                    "type": "image",
+                                    "source": {
+                                        "type": "base64",
+                                        "media_type": "image/png",
+                                        "data": b64_data
+                                    }
                                 }
-                            }
-                        }));
-                        function_responses.push(json!({
-                            "inlineData": {
-                                "mimeType": "image/png",
-                                "data": b64_data
-                            }
+                            ]
                         }));
                     } else if let Some(idx) = output_str.find("\nSCREENSHOT_BASE64:") {
-                        // Mixed output with embedded screenshot (e.g. browser_get_page_state)
                         let text_part = &output_str[..idx];
                         let b64_data = &output_str[idx + "\nSCREENSHOT_BASE64:".len()..];
                         function_responses.push(json!({
-                            "functionResponse": {
-                                "name": name,
-                                "response": {
-                                    "output": text_part
+                            "type": "tool_result",
+                            "tool_use_id": tool_use_id,
+                            "content": [
+                                {
+                                    "type": "text",
+                                    "text": text_part
+                                },
+                                {
+                                    "type": "image",
+                                    "source": {
+                                        "type": "base64",
+                                        "media_type": "image/png",
+                                        "data": b64_data
+                                    }
                                 }
-                            }
-                        }));
-                        function_responses.push(json!({
-                            "inlineData": {
-                                "mimeType": "image/png",
-                                "data": b64_data
-                            }
+                            ]
                         }));
                     } else {
                         function_responses.push(json!({
-                            "functionResponse": {
-                                "name": name,
-                                "response": { "output": output_str }
-                            }
+                            "type": "tool_result",
+                            "tool_use_id": tool_use_id,
+                            "content": output_str
                         }));
                     }
                 }
             }
 
-            // Append all tool results as a single user turn
-            contents.push(json!({
+            messages.push(json!({
                 "role": "user",
-                "parts": function_responses
+                "content": function_responses
             }));
 
-            // Continue loop
         } else {
-            // No tool calls — extract final text and finish
             let text = parts
                 .iter()
+                .filter(|p| p["type"].as_str() == Some("text"))
                 .filter_map(|p| p["text"].as_str())
                 .collect::<Vec<_>>()
                 .join("\n");

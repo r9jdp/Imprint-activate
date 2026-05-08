@@ -1234,6 +1234,7 @@ function buildStudentAgentPrompt(query: string, snapshot: WorkspaceSnapshot, pro
     'Use the provided local student profile and live Workspace snapshot as context.',
     'For Gmail, Google Classroom, Google Calendar, Google Docs, and Google Drive questions, use the Workspace snapshot and structured data first.',
     'If the user is only asking for information that is already available in the snapshot, answer directly without opening Chrome.',
+    'For assignment drafts, notes, and Google Doc writing tasks, prefer the direct Google Docs API tool first instead of typing large content into the browser editor.',
     'Only use browser_* tools when the user explicitly wants a browser action, when page interaction is required, or when the provided data is insufficient to answer correctly.',
     'If the user request requires opening pages, navigating, clicking, typing, inspecting browser state, or interacting with web apps, use the browser_* tools yourself.',
     'When the Workspace snapshot already contains direct links such as Gmail message links, Classroom course links, Classroom assignment links, or Calendar event links, navigate to those links first instead of opening a homepage and searching visually.',

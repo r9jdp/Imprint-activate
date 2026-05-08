@@ -397,6 +397,87 @@ pub async fn snapshot() -> Result<WorkspaceSnapshot, String> {
     })
 }
 
+pub async fn create_doc_with_content(
+    title: &str,
+    content: &str,
+    open_after_create: bool,
+) -> Result<String, String> {
+    let clean_title = title.trim();
+    if clean_title.is_empty() {
+        return Err("Document title cannot be empty.".to_string());
+    }
+
+    let client = Client::new();
+    let access = access_token(&client).await?;
+
+    let create_response = client
+        .post("https://docs.googleapis.com/v1/documents")
+        .bearer_auth(&access)
+        .json(&serde_json::json!({
+            "title": clean_title
+        }))
+        .send()
+        .await
+        .map_err(|e| format!("Failed to create Google Doc: {}", e))?;
+
+    let create_status = create_response.status();
+    let create_payload: Value = create_response.json().await.map_err(|e| e.to_string())?;
+    if !create_status.is_success() {
+        return Err(format!(
+            "Failed to create Google Doc ({}): {}",
+            create_status, create_payload
+        ));
+    }
+
+    let document_id = create_payload["documentId"]
+        .as_str()
+        .ok_or_else(|| "Google Docs response missing documentId".to_string())?;
+    let doc_url = format!("https://docs.google.com/document/d/{}/edit", document_id);
+
+    if !content.trim().is_empty() {
+        let update_response = client
+            .post(format!(
+                "https://docs.googleapis.com/v1/documents/{}:batchUpdate",
+                document_id
+            ))
+            .bearer_auth(&access)
+            .json(&serde_json::json!({
+                "requests": [
+                    {
+                        "insertText": {
+                            "location": { "index": 1 },
+                            "text": content
+                        }
+                    }
+                ]
+            }))
+            .send()
+            .await
+            .map_err(|e| format!("Failed to write Google Doc content: {}", e))?;
+
+        let update_status = update_response.status();
+        let update_payload: Value = update_response.json().await.map_err(|e| e.to_string())?;
+        if !update_status.is_success() {
+            return Err(format!(
+                "Failed to write Google Doc content ({}): {}",
+                update_status, update_payload
+            ));
+        }
+    }
+
+    if open_after_create {
+        crate::tools::open_external_url(&doc_url)?;
+    }
+
+    Ok(format!(
+        "Created Google Doc \"{}\".\nDocument ID: {}\nURL: {}\nContent written: {}",
+        clean_title,
+        document_id,
+        doc_url,
+        if content.trim().is_empty() { "no" } else { "yes" }
+    ))
+}
+
 async fn fetch_gmail(client: &Client, access_token: &str) -> Result<Vec<GmailMessage>, String> {
     let response = client
         .get("https://gmail.googleapis.com/gmail/v1/users/me/messages")
