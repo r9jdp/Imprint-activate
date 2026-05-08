@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import { invoke } from '@tauri-apps/api/core'
+import { listen } from '@tauri-apps/api/event'
 import { AnimatePresence, motion } from 'framer-motion'
 import Markdown from 'react-markdown'
 import {
@@ -10,6 +11,7 @@ import {
   GoogleLogo,
   GraduationCap,
   Link,
+  Square,
   SignOut,
   Sparkle,
 } from '@phosphor-icons/react'
@@ -33,12 +35,14 @@ type GmailMessage = {
   subject: string
   snippet: string
   internal_date?: string | null
+  web_link?: string | null
 }
 
 type ClassroomAssignment = {
   id: string
   course_id: string
   course_name: string
+  course_link?: string | null
   title: string
   state: string
   due_date?: string | null
@@ -59,6 +63,11 @@ type WorkspaceSnapshot = {
   gmail: GmailMessage[]
   classroom: ClassroomAssignment[]
   calendar: CalendarEvent[]
+}
+
+type AgentEvent = {
+  kind: string
+  content: string
 }
 
 type StudentProfile = {
@@ -115,11 +124,53 @@ export default function App() {
   const [studentProfile, setStudentProfile] = useState<StudentProfile | null>(null)
   const [profileDraft, setProfileDraft] = useState<StudentProfileDraft>(EMPTY_PROFILE_DRAFT)
   const [showOnboarding, setShowOnboarding] = useState(false)
+  const [browserConnected, setBrowserConnected] = useState(false)
+  const [agentActivity, setAgentActivity] = useState<string[]>([])
 
   useEffect(() => {
     setThemeMode('dark')
     void bootstrap()
   }, [setThemeMode])
+
+  useEffect(() => {
+    let unsubscribe: (() => void) | undefined
+
+    void (async () => {
+      unsubscribe = await listen<AgentEvent>('agent_event', (event) => {
+        const payload = event.payload
+        if (payload.kind === 'tool_call') {
+          const toolName = parseToolName(payload.content)
+          if (toolName.startsWith('browser_')) {
+            setBrowserConnected(true)
+          }
+          setAgentActivity((current) => [...current, `Running ${toolName}...`].slice(-8))
+          return
+        }
+
+        if (payload.kind === 'tool_result') {
+          const summary = summarizeToolResult(payload.content)
+          if (summary) {
+            setAgentActivity((current) => [...current, summary].slice(-8))
+          }
+          return
+        }
+
+        if (payload.kind === 'message') {
+          setAssistantAnswer(payload.content.trim())
+          return
+        }
+
+        if (payload.kind === 'error') {
+          setError(payload.content)
+          return
+        }
+      })
+    })()
+
+    return () => {
+      unsubscribe?.()
+    }
+  }, [])
 
   async function bootstrap() {
     try {
@@ -200,17 +251,79 @@ export default function App() {
     }
   }
 
+  async function connectBrowser() {
+    setBusy('refreshing')
+    setFeedback('')
+    setError('')
+    try {
+      const message = await invoke<string>('browser_connect')
+      setBrowserConnected(true)
+      setFeedback(message)
+    } catch (e) {
+      setError(normalizeError(e))
+    } finally {
+      setBusy('idle')
+    }
+  }
+
+  async function setupBrowser() {
+    setBusy('refreshing')
+    setFeedback('')
+    setError('')
+    try {
+      const message = await invoke<string>('browser_setup_chrome')
+      setFeedback(message)
+    } catch (e) {
+      setError(normalizeError(e))
+    } finally {
+      setBusy('idle')
+    }
+  }
+
+  async function disconnectBrowser() {
+    setBusy('disconnecting')
+    setFeedback('')
+    setError('')
+    try {
+      await invoke('browser_disconnect')
+      setBrowserConnected(false)
+      setBrowserPageState(null)
+      setBrowserScreenshot('')
+      setFeedback('Disconnected Imprint browser session.')
+    } catch (e) {
+      setError(normalizeError(e))
+    } finally {
+      setBusy('idle')
+    }
+  }
+
   async function askAssistant() {
     if (!snapshot || !query.trim()) return
     setBusy('asking')
     setFeedback('')
     setError('')
     setAssistantAnswer('')
+    setAgentActivity([])
     try {
-      const answer = await invoke<string>('ask_workspace_assistant', {
-        request: { query: query.trim(), snapshot },
+      await invoke('run_agent_command', {
+        prompt: buildStudentAgentPrompt(query.trim(), snapshot, studentProfile),
+        history: [],
       })
-      setAssistantAnswer(answer.trim() || 'Gemini returned no usable text for this query.')
+      setFeedback('Run completed.')
+    } catch (e) {
+      setError(normalizeError(e))
+    } finally {
+      setBusy('idle')
+    }
+  }
+
+  async function stopAssistant() {
+    setFeedback('')
+    setError('')
+    try {
+      await invoke('interrupt_agent')
+      setAgentActivity((current) => [...current, 'Stopped by user.'].slice(-8))
+      setFeedback('Stopped the current run.')
     } catch (e) {
       setError(normalizeError(e))
     } finally {
@@ -277,6 +390,53 @@ export default function App() {
             </InfoCard>
 
             <InfoCard
+              title="Browser"
+              action={<StatusPill configured={browserConnected} connected={browserConnected} configuredLabel="Ready" missingLabel="Idle" />}
+            >
+              <div className="space-y-3">
+                <div className="text-[12px] leading-6" style={{ color: colors.textSecondary }}>
+                  Launch and control an isolated Chrome session directly from Imprint.
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    onClick={() => void connectBrowser()}
+                    disabled={busy !== 'idle'}
+                    className="h-10 rounded-xl text-[12px] font-medium"
+                    style={{ background: colors.accent, color: colors.textOnAccent, opacity: busy !== 'idle' ? 0.6 : 1 }}
+                  >
+                    Connect
+                  </button>
+                  <button
+                    onClick={() => void setupBrowser()}
+                    disabled={busy !== 'idle'}
+                    className="h-10 rounded-xl text-[12px] font-medium"
+                    style={{
+                      background: colors.surfaceSecondary,
+                      color: colors.textPrimary,
+                      border: `1px solid ${colors.containerBorder}`,
+                      opacity: busy !== 'idle' ? 0.6 : 1,
+                    }}
+                  >
+                    Setup Chrome
+                  </button>
+                </div>
+                <button
+                  onClick={() => void disconnectBrowser()}
+                  disabled={busy !== 'idle' || !browserConnected}
+                  className="w-full h-10 rounded-xl text-[12px] font-medium"
+                  style={{
+                    background: colors.statusErrorBg,
+                    color: colors.statusError,
+                    border: `1px solid ${colors.containerBorder}`,
+                    opacity: busy !== 'idle' || !browserConnected ? 0.6 : 1,
+                  }}
+                >
+                  Disconnect browser
+                </button>
+              </div>
+            </InfoCard>
+
+            <InfoCard
               title="Student Profile"
               action={
                 <StatusPill
@@ -326,15 +486,6 @@ export default function App() {
                   {busy === 'signing-in' ? 'Waiting for Google approval...' : 'Sign in with Google'}
                 </button>
               </div>
-            </InfoCard>
-
-            <InfoCard title="Next">
-              <ul className="space-y-2 text-[12px] leading-5" style={{ color: colors.textSecondary }}>
-                <li>1. Load Gmail, Classroom, and Calendar into the desktop shell.</li>
-                <li>2. Add onboarding and local `user.md` profile generation.</li>
-                <li>3. Add browser control on top of this data layer.</li>
-                <li>4. Add the context graph and student-specific ranking logic.</li>
-              </ul>
             </InfoCard>
 
             <div className="mt-auto flex items-center gap-2 pt-1">
@@ -435,6 +586,9 @@ export default function App() {
                     <div className="text-[12px] mt-2 leading-5" style={{ color: colors.textSecondary }}>
                       {(item as GmailMessage).snippet}
                     </div>
+                    {(item as GmailMessage).web_link && (
+                      <ExternalLinkButton href={(item as GmailMessage).web_link!} label="Open in Imprint browser" mode="browser" />
+                    )}
                   </div>
                 )}
               />
@@ -458,7 +612,7 @@ export default function App() {
                         Due {formatDue(assignment.due_date, assignment.due_time)}
                       </div>
                       {assignment.alternate_link && (
-                        <ExternalLinkButton href={assignment.alternate_link} label="Open assignment" />
+                        <ExternalLinkButton href={assignment.alternate_link} label="Open in Imprint browser" mode="browser" />
                       )}
                     </div>
                   )
@@ -480,7 +634,7 @@ export default function App() {
                       <div className="text-[12px] mt-2" style={{ color: colors.textSecondary }}>
                         {event.start ? formatDate(event.start) : 'No start time'}
                       </div>
-                      {event.html_link && <ExternalLinkButton href={event.html_link} label="Open event" />}
+                      {event.html_link && <ExternalLinkButton href={event.html_link} label="Open in Imprint browser" mode="browser" />}
                     </div>
                   )
                 }}
@@ -611,7 +765,7 @@ export default function App() {
                     Ask Imprint
                   </div>
                   <div className="text-[12px] mt-1 mb-3 leading-6" style={{ color: colors.textSecondary }}>
-                    Query Gemini over your local student profile plus the connected Gmail, Classroom, and Calendar context.
+                    Describe the task once. Imprint will use your profile, Workspace context, and browser tools automatically when needed.
                   </div>
                   <div className="flex items-center gap-3">
                     <input
@@ -643,7 +797,38 @@ export default function App() {
                     >
                       {busy === 'asking' ? 'Asking...' : 'Ask'}
                     </button>
+                    <button
+                      onClick={() => void stopAssistant()}
+                      disabled={busy !== 'asking'}
+                      className="h-12 px-4 rounded-xl text-[13px] font-medium flex items-center gap-2"
+                      style={{
+                        background: colors.statusErrorBg,
+                        color: colors.statusError,
+                        border: `1px solid ${colors.containerBorder}`,
+                        opacity: busy !== 'asking' ? 0.6 : 1,
+                      }}
+                    >
+                      <Square size={12} weight="fill" />
+                      Stop
+                    </button>
                   </div>
+                  {agentActivity.length > 0 && (
+                    <div
+                      className="mt-3 rounded-xl px-4 py-3 max-h-[120px] overflow-y-auto"
+                      style={{ background: colors.surfaceSecondary, border: `1px solid ${colors.containerBorder}` }}
+                    >
+                      <div className="text-[11px] uppercase tracking-[0.14em] mb-2" style={{ color: colors.textTertiary }}>
+                        Agent Activity
+                      </div>
+                      <div className="space-y-1">
+                        {agentActivity.map((item, index) => (
+                          <div key={`${item}-${index}`} className="text-[12px]" style={{ color: colors.textSecondary }}>
+                            {item}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                   <div
                     className="mt-3 rounded-xl px-4 py-3 max-h-[160px] overflow-y-auto text-[12px] leading-6"
                     style={{
@@ -652,15 +837,13 @@ export default function App() {
                       border: `1px solid ${colors.containerBorder}`,
                     }}
                   >
-                    {busy === 'asking'
-                      ? 'Thinking through your profile, Gmail, Classroom, and Calendar context...'
-                      : assistantAnswer ? (
+                    {assistantAnswer ? (
                         <div className="prose-cloud conversation-selectable text-[12px] leading-6 [&>*:first-child]:mt-0 [&>*:last-child]:mb-0">
                           <Markdown remarkPlugins={[remarkGfm]}>
                             {assistantAnswer}
                           </Markdown>
                         </div>
-                      ) : 'No response yet. Try asking what you should focus on, what is pending, or which email matters most.'}
+                      ) : 'No response yet.'}
                   </div>
                 </div>
               </div>
@@ -860,11 +1043,11 @@ function DataColumn<T>({
   )
 }
 
-function ExternalLinkButton({ href, label }: { href: string; label: string }) {
+function ExternalLinkButton({ href, label, mode = 'external' }: { href: string; label: string; mode?: 'external' | 'browser' }) {
   const colors = useColors()
   return (
     <button
-      onClick={() => void invoke('open_external_command', { url: href })}
+      onClick={() => void invoke(mode === 'browser' ? 'browser_navigate_command' : 'open_external_command', { url: href })}
       className="mt-3 inline-flex items-center gap-1 text-[11px]"
       style={{ color: colors.accent }}
     >
@@ -922,4 +1105,47 @@ function splitList(value: string): string[] {
     .split(',')
     .map((item) => item.trim())
     .filter(Boolean)
+}
+
+function buildStudentAgentPrompt(query: string, snapshot: WorkspaceSnapshot, profile: StudentProfile | null): string {
+  const profileBlock = profile
+    ? JSON.stringify(profile, null, 2)
+    : 'No local student profile configured.'
+
+  const snapshotBlock = JSON.stringify(snapshot, null, 2)
+
+  return [
+    'You are Imprint, a stateful student agent.',
+    'Use the provided local student profile and live Workspace snapshot as context.',
+    'If the user request requires opening pages, navigating, clicking, typing, inspecting browser state, or interacting with web apps, use the browser_* tools yourself.',
+    'When the Workspace snapshot already contains direct links such as Gmail message links, Classroom course links, Classroom assignment links, or Calendar event links, navigate to those links first instead of opening a homepage and searching visually.',
+    'Do not ask the user to manually inspect elements or provide selectors unless absolutely necessary.',
+    'For Google Forms and other forms, fill only fields whose values are explicitly known from the user request, local profile, or Workspace data. If a value is unknown, leave that field untouched.',
+    'Never submit a form unless the user explicitly asked you to submit it.',
+    'Answer only what the user asked and stay grounded in the provided data.',
+    '',
+    `Local student profile:\n${profileBlock}`,
+    '',
+    `Workspace snapshot:\n${snapshotBlock}`,
+    '',
+    `User request:\n${query}`,
+  ].join('\n')
+}
+
+function parseToolName(raw: string): string {
+  try {
+    const parsed = JSON.parse(raw)
+    if (parsed && typeof parsed.name === 'string') {
+      return parsed.name
+    }
+  } catch {}
+
+  const colonIndex = raw.indexOf(':')
+  return colonIndex >= 0 ? raw.slice(0, colonIndex).trim() : raw.trim()
+}
+
+function summarizeToolResult(raw: string): string {
+  const trimmed = raw.trim()
+  if (!trimmed) return ''
+  return trimmed.length > 140 ? `${trimmed.slice(0, 137)}...` : trimmed
 }

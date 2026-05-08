@@ -20,6 +20,8 @@ const SCOPES: &[&str] = &[
     "https://www.googleapis.com/auth/classroom.courses.readonly",
     "https://www.googleapis.com/auth/classroom.coursework.me.readonly",
     "https://www.googleapis.com/auth/calendar.readonly",
+    "https://www.googleapis.com/auth/drive.file",
+    "https://www.googleapis.com/auth/documents",
 ];
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -51,6 +53,7 @@ pub struct GmailMessage {
     pub subject: String,
     pub snippet: String,
     pub internal_date: Option<String>,
+    pub web_link: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -58,6 +61,7 @@ pub struct ClassroomAssignment {
     pub id: String,
     pub course_id: String,
     pub course_name: String,
+    pub course_link: Option<String>,
     pub title: String,
     pub state: String,
     pub due_date: Option<String>,
@@ -446,6 +450,7 @@ async fn fetch_gmail(client: &Client, access_token: &str) -> Result<Vec<GmailMes
             subject: header_value("Subject"),
             snippet: detail_payload["snippet"].as_str().unwrap_or_default().to_string(),
             internal_date: detail_payload["internalDate"].as_str().map(str::to_string),
+            web_link: Some(format!("https://mail.google.com/mail/u/0/#inbox/{}", id)),
         });
     }
     Ok(results)
@@ -497,6 +502,7 @@ async fn fetch_classroom(client: &Client, access_token: &str) -> Result<Vec<Clas
                 id: item["id"].as_str().unwrap_or_default().to_string(),
                 course_id: course_id.to_string(),
                 course_name: course_name.clone(),
+                course_link: course["alternateLink"].as_str().map(str::to_string),
                 title: item["title"].as_str().unwrap_or("Untitled coursework").to_string(),
                 state: item["state"].as_str().unwrap_or("UNKNOWN").to_string(),
                 due_date: item["dueDate"].as_object().map(|o| {

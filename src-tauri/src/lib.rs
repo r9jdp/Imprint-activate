@@ -373,6 +373,33 @@ async fn get_workspace_snapshot() -> Result<google::WorkspaceSnapshot, String> {
 }
 
 #[tauri::command]
+async fn browser_get_page_state_command(
+    browser_state: State<'_, browser::BrowserState>,
+) -> Result<String, String> {
+    let args = serde_json::json!({});
+    browser::actions::dispatch_browser_tool("browser_get_page_state", &args, &browser_state).await
+}
+
+#[tauri::command]
+async fn browser_click_command(
+    selector: String,
+    browser_state: State<'_, browser::BrowserState>,
+) -> Result<String, String> {
+    let args = serde_json::json!({ "selector": selector });
+    browser::actions::dispatch_browser_tool("browser_click", &args, &browser_state).await
+}
+
+#[tauri::command]
+async fn browser_type_text_command(
+    selector: String,
+    text: String,
+    browser_state: State<'_, browser::BrowserState>,
+) -> Result<String, String> {
+    let args = serde_json::json!({ "selector": selector, "text": text });
+    browser::actions::dispatch_browser_tool("browser_type_text", &args, &browser_state).await
+}
+
+#[tauri::command]
 async fn get_student_profile() -> Result<StudentProfileStatus, String> {
     let profile = profile::load()?;
     Ok(StudentProfileStatus {
@@ -576,6 +603,9 @@ pub fn run() {
                 browser::commands::browser_screenshot_command,
                 browser::commands::browser_disconnect,
                 browser::commands::browser_setup_chrome,
+                browser_get_page_state_command,
+                browser_click_command,
+                browser_type_text_command,
             ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

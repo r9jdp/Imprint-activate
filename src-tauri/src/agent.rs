@@ -694,9 +694,12 @@ fn build_system_prompt() -> String {
          APPROACH: Navigate first, then call browser_get_page_state. The screenshot will have orange numbered labels on interactive elements. Use those numbers with browser_click (e.g. browser_click(selector=\"7\")) — this is the MOST RELIABLE method. You can also use element names from the elements list.\n\
          CRITICAL BROWSER RULES:\n\
          - For ANY web or browser task, call browser_navigate as the VERY FIRST tool call. No other tool before it.\n\
+         - If the user context or provided data already contains a direct URL for the target page, use browser_navigate with that exact URL FIRST. Do not open a homepage and hunt visually when a direct link is available.\n\
          - NEVER use shell_exec to open, launch, restart, or kill Chrome. Not 'open -a Google Chrome', not pkill, not killall. Nothing.\n\
          - Chrome lifecycle (launch, restart, session restore) is handled AUTOMATICALLY by the browser tools. You do nothing.\n\
          - If a browser tool fails after 2 retries, report the error text to the user verbatim and stop. Do not try shell workarounds.\n\
+         - For Google Forms or other forms: only fill fields whose values are explicitly known from the user's request or provided data. Leave unknown fields untouched. Never guess missing values.\n\
+         - Never submit a form unless the user explicitly asked you to submit it.\n\
          - The 'PRIORITIZE TERMINAL' rule does NOT apply to browser tasks. For web tasks, use browser_* tools only.\n\n\
          TIER 3 — VISION / MOUSE CONTROL (for GUI interactions that require clicking on screen elements):\n\
          - screenshot(): Capture the screen as an image for visual analysis. Returns a base64 PNG image.\n\

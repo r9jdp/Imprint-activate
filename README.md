@@ -152,8 +152,11 @@ The current implementation now includes:
 - summonable desktop shell UI
 - Google OAuth sign-in from local env configuration
 - live reads from Gmail, Google Classroom, and Google Calendar
+- local student profile onboarding stored on-device
+- prompt-driven Gemini agent that can use browser tools for web tasks
 - a Workspace snapshot dashboard for recent email, coursework, and events
-- a Gemini-powered query box that answers against the connected Workspace context
+- a Gemini-powered query box that uses student profile + Workspace context
+- browser control integrated into the agent flow for task execution
 
 The current Gemini assistant call uses:
 
@@ -161,11 +164,18 @@ The current Gemini assistant call uses:
 
 Still intentionally pending:
 
-- onboarding flow
-- `user.md` generation
 - local context graph
-- browser control actions on top of the Workspace data
 - reminders and personalized ranking logic
+- Google Docs / Drive integration
+- polished submission website with demo video and download flow
+
+The repository will also include a separate submission website in a dedicated `frontend/` folder.
+That site is intended to:
+
+- explain the product clearly
+- match the desktop agent visual theme
+- embed the demo video
+- provide a download/install entry point for the agent
 
 What it intentionally leaves out:
 
