@@ -538,7 +538,12 @@ fn is_toggle_shortcut(shortcut: &tauri_plugin_global_shortcut::Shortcut) -> bool
     shortcut.matches(Modifiers::ALT | Modifiers::SHIFT, Code::Space)
 }
 
-#[cfg(not(target_os = "windows"))]
+#[cfg(target_os = "macos")]
+fn is_toggle_shortcut(shortcut: &tauri_plugin_global_shortcut::Shortcut) -> bool {
+    shortcut.matches(Modifiers::SUPER | Modifiers::SHIFT, Code::Space)
+}
+
+#[cfg(all(not(target_os = "windows"), not(target_os = "macos")))]
 fn is_toggle_shortcut(shortcut: &tauri_plugin_global_shortcut::Shortcut) -> bool {
     shortcut.matches(Modifiers::ALT, Code::Space)
 }
@@ -581,7 +586,9 @@ pub fn run() {
                 .with_shortcuts([
                     #[cfg(target_os = "windows")]
                     "alt+shift+space",
-                    #[cfg(not(target_os = "windows"))]
+                    #[cfg(target_os = "macos")]
+                    "super+shift+space",
+                    #[cfg(all(not(target_os = "windows"), not(target_os = "macos")))]
                     "alt+space",
                 ])
                 .unwrap()

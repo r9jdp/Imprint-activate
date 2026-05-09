@@ -131,6 +131,11 @@ const EMPTY_PROFILE_DRAFT: StudentProfileDraft = {
 export default function App() {
   const colors = useColors()
   const setThemeMode = useThemeStore((s) => s.setThemeMode)
+  const shortcutLabel = /Mac|iPhone|iPad|iPod/i.test(window.navigator.platform)
+    ? 'Command + Shift + Space'
+    : /Win/i.test(window.navigator.platform)
+      ? 'Alt + Shift + Space'
+      : 'Alt + Space'
   const [status, setStatus] = useState<GoogleConnectionStatus>({ configured: false, connected: false })
   const [snapshot, setSnapshot] = useState<WorkspaceSnapshot | null>(null)
   const [busy, setBusy] = useState<'idle' | 'signing-in' | 'refreshing' | 'disconnecting' | 'asking' | 'saving-profile' | 'uploading-documents'>('idle')
@@ -431,7 +436,7 @@ export default function App() {
                   className="px-2 py-1 rounded-md"
                   style={{ background: colors.surfaceSecondary, color: colors.textPrimary }}
                 >
-                  Alt + Shift + Space
+                  {shortcutLabel}
                 </span>
               </div>
             </InfoCard>

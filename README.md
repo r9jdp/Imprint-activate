@@ -1,328 +1,129 @@
-# Activate AI Fellows Submission
+# Imprint
 
-## Project
+Imprint is a local student agent that helps turn scattered academic work into one guided workflow.
 
-**Imprint** is a local, stateful browser agent for students.
+Instead of making students jump between Gmail, Google Classroom, Calendar, forms, browser tabs, and documents, Imprint keeps that context in one place and helps them take the next step. It is designed to feel less like a chatbot and more like a focused academic copilot that understands what is pending, what matters most, and what action should happen next.
 
-It connects a student's academic world across Gmail, Google Classroom, Google Calendar, browser state, and local memory. Instead of acting like a stateless assistant that only understands the current page, Imprint builds a persistent context graph about the student, their priorities, their pending work, and their recent high-signal communications.
+## Tagline
 
-The goal is not to build a generic desktop copilot. The goal is to build the smallest useful version of a student agent that can:
+**A stateful student agent for assignments, deadlines, emails, and browser tasks.**
 
-- understand what the student should focus on
-- remember why it matters
-- open the right browser context
-- create working artifacts like drafts and documents
-- keep all of that state locally on the student's device
+## Why I Made This
 
-## Core Idea
+Student work is fragmented.
 
-Students live across fragmented systems:
+- assignment instructions live in Classroom
+- deadline changes arrive in email
+- reminders sit in Calendar
+- important opportunities like placements or internships often get buried
+- the actual work still happens in the browser and in documents
 
-- assignment instructions are in Google Classroom
-- deadline changes arrive through email
-- due dates live in Calendar
-- important goals like placements and internships are never reflected in those tools
+Most assistants only help with the page in front of you. They do not really remember the student, their priorities, or the work already in progress.
 
-As a result, students are forced to manually stitch everything together every day.
+I built Imprint to explore a better model: an assistant that keeps local context about the student and uses that state to help them act, not just answer.
 
-Imprint turns that fragmented workflow into a **stateful execution loop**:
+## What It Is
 
-1. understand the student through a short onboarding flow
-2. build a local profile and context graph
-3. continuously interpret recent emails, assignments, deadlines, and current browser pages through that graph
-4. tell the student what matters most right now
-5. take browser actions to help them actually complete the work
+Imprint is a desktop student agent with three core ideas:
 
-## Product Thesis
+- it connects to the student tools they already use
+- it keeps useful profile and task context locally on the device
+- it can take action in the browser when a task needs execution
 
-> **A local student agent should not just answer questions about the current page. It should understand who the student is, what they care about, what is pending, and what action should be taken next.**
+The result is a product that can help a student understand what is pending, what to focus on, and how to move a task forward.
 
-## Why This Exists
+## What It Can Do
 
-Most assistants are stateless.
+- connect to Google Workspace tools a student already uses
+- read recent Gmail, Google Classroom, and Calendar context
+- keep a local student profile and memory on-device
+- answer questions using that live academic context
+- prioritize what matters based on the student’s goals and pending work
+- open and navigate browser flows when action is required
+- create working documents for assignment-related tasks
 
-They can:
+## Core Use Case
 
-- summarize the current page
-- answer a one-off question
-- help with a single task
+A student opens Imprint and asks:
 
-But they usually do not know:
+**“What should I focus on right now?”**
 
-- whether the student is prioritizing placements or grades
-- which emails are personally important
-- what deadlines are already pending
-- whether the current page relates to an unfinished task
-- what document or draft has already been created for that assignment
+Imprint can look across recent emails, pending coursework, deadlines, and the student’s saved profile, then surface the most relevant next task.
 
-Imprint exists to make the browser feel like a stateful academic workspace instead of a stream of disconnected tabs.
-
-## What Makes It Interesting
-
-### 1. Student-specific, not generic
-
-This is not a general-purpose browser agent.
-
-It is designed for one concrete persona:
-
-- a student juggling assignments, deadlines, placement opportunities, and academic communication
-
-That lets the product make better decisions than a generic assistant.
-
-### 2. Local student profile and onboarding
-
-At first launch, Imprint asks a small set of onboarding questions and generates local memory such as `user.md`.
-
-This profile captures:
-
-- academic identity
-- current priorities
-- important email categories
-- goals like placements, internships, assignments, or exams
-- output preferences
-- reminder preferences
-
-This gives the system stable context before it starts acting.
-
-### 3. Context graph instead of flat memory
-
-Imprint maintains a local context graph with relationships across:
-
-- student profile
-- courses
-- assignments
-- deadlines
-- emails
-- reminders
-- resources
-- drafts
-- browser tasks
-
-This makes it possible to reason about:
-
-- what is urgent
-- what is high-value for this particular student
-- what the student is ignoring
-- what should be done first
-
-### 4. Recent email and pending task prioritization
-
-The system does not just surface unread emails.
-
-It should be able to say:
-
-- this placement cell email matters more than the club newsletter
-- this assignment matters less than an internship deadline tomorrow
-- this professor email changes how a pending submission should be handled
-
-That is where the local graph becomes practically useful.
-
-### 5. Execution, not just organization
-
-Imprint is not only a reminder system.
-
-Using browser control, it can:
-
-- open the top-priority assignment
-- read instructions
-- open related emails or resources
-- create a new Google Doc
-- write a first draft
-- prepare the browser context for the next step
-
-The product is meant to help students act, not just observe.
-
-## Smallest Useful Version
-
-The intentionally scoped version of Imprint includes:
-
-- a global overlay or summonable browser control surface
-- a short onboarding interview
-- local student memory generation (`user.md`)
-- a local context graph for the student and recent activity
-- reading Google Classroom, Gmail, and Calendar context
-- ranking what the student should focus on
-- opening the most relevant browser pages
-- creating a first draft document for a selected assignment
-
-## Current Build Status
-
-The current implementation now includes:
-
-- summonable desktop shell UI
-- Google OAuth sign-in from local env configuration
-- live reads from Gmail, Google Classroom, and Google Calendar
-- local student profile onboarding stored on-device
-- prompt-driven Gemini agent that can use browser tools for web tasks
-- a Workspace snapshot dashboard for recent email, coursework, and events
-- a Gemini-powered query box that uses student profile + Workspace context
-- browser control integrated into the agent flow for task execution
-
-The current Gemini assistant call uses:
-
-- `gemini-2.5-flash`
-
-Still intentionally pending:
-
-- local context graph
-- reminders and personalized ranking logic
-- Google Docs / Drive integration
-- polished submission website with demo video and download flow
-
-The repository will also include a separate submission website in a dedicated `frontend/` folder.
-That site is intended to:
-
-- explain the product clearly
-- match the desktop agent visual theme
-- embed the demo video
-- provide a download/install entry point for the agent
-
-What it intentionally leaves out:
-
-- generic desktop automation
-- plugin ecosystems
-- broad multi-domain agent behavior
-- full visual graph analytics product
-- trying to automate every part of student life
-
-The aim is to keep the product focused, demoable, and obviously useful.
-
-## Primary Use Case
-
-### Stateful academic execution
-
-A student asks:
-
-> “What should I focus on right now?”
-
-Imprint checks:
-
-- pending Classroom assignments
-- recent important emails
-- upcoming Calendar deadlines
-- the student's profile and priorities
-
-It then answers:
-
-- what is pending
-- what is personally most important
-- what should be done first
-
-Then the student asks:
-
-> “Handle the top priority.”
-
-Imprint can:
+From there, the student can ask it to continue:
 
 - open the relevant assignment
-- read its instructions
-- open the related email/resource
-- summarize the work
-- create a draft document
-- update local state so it remembers that work has started
+- gather the related context
+- prepare a draft
+- help with a form or browser task
 
-## Example Demo Scenario
+That is the main idea behind the product: not just answering a prompt, but helping carry the task forward.
 
-A student has:
+## What Makes It Different
 
-- multiple pending assignments
-- one placement cell email with a deadline tomorrow
-- a professor update that changes submission instructions
+Most assistants are stateless. Imprint is meant to be stateful.
 
-The student opens Imprint and asks:
+That means it is built around continuity:
 
-1. “What should I focus on right now?”
-2. “Open the most urgent item and gather everything I need.”
-3. “Create a document and write a first draft for this assignment.”
-4. “Save this as in progress and remind me before the deadline.”
+- who the student is
+- what they care about
+- what is already pending
+- what has already been started
+- what should happen next
 
-This flow demonstrates:
+It is also intentionally narrow. This is not trying to be a general-purpose desktop agent for everything. It is focused on one specific domain where continuity actually matters: student workflow.
 
-- statefulness
-- prioritization
-- local memory
-- context graph reasoning
-- browser execution
+## Product Scope
 
-## Graph Design
+The current version focuses on:
 
-The graph has two layers.
+- student profile and local memory
+- Gmail, Classroom, and Calendar context
+- academic prioritization
+- browser-based execution
+- document creation for work in progress
 
-### Stable profile graph
+It intentionally does not try to be:
 
-Captures who the student is:
+- a generic productivity suite
+- a broad operating system agent
+- a note-taking app
+- a visual graph analytics product
 
-- degree
-- branch
-- semester
-- goals
-- priorities
-- interests
-- output preferences
-- important communication categories
+The goal is a small, useful product with a clear point of view.
 
-### Live activity graph
+## Submission Story
 
-Captures what is changing:
+The idea behind Imprint is simple:
 
-- recent emails
-- assignments
-- deadlines
-- reminders
-- resources
-- created drafts
-- submission state
+> students do not need another stateless assistant.  
+> they need an agent that remembers context, understands priorities, and helps them move real academic tasks forward.
 
-These layers let the agent move from generic urgency to **personalized urgency**.
+That is what this project explores.
 
-## Local-First Memory
+## Demo Flow
 
-Imprint stores its memory locally.
+The product is best demonstrated through a concrete student workflow:
 
-That includes:
+1. connect academic tools
+2. ask what is pending or urgent
+3. let Imprint identify the most relevant next task
+4. open the right browser or document context
+5. help complete the task
 
-- `user.md` for readable profile context
-- structured graph data for machine reasoning
-- optional recent activity state
+Examples include:
 
-This is important because the product is meant to feel personal and trustworthy. The student should be able to inspect, edit, and control the memory directly.
+- checking whether an assignment is pending
+- opening the right Classroom task
+- preparing a draft document
+- helping with a form-based workflow
 
-## Why This Is Different
+## Local-First
 
-This project is different from a generic browser assistant because it is:
+Imprint stores the student’s profile and working context locally so the experience feels personal and inspectable rather than opaque.
 
-- **stateful**, not stateless
-- **student-specific**, not broad and vague
-- **local-first**, not remote-memory-first
-- **executional**, not only informational
-- **priority-aware**, not merely reactive
-
-The key novelty is not “AI can browse.”
-
-The key novelty is:
-
-> **the browser agent maintains an evolving local model of the student and their academic context, then uses that state to decide what matters and what to do next.**
-
-## Design Judgment
-
-The larger underlying prototype included broader agent capabilities. For this submission, the right move is to narrow the product around a sharper use case:
-
-- student workflow
-- local memory
-- task prioritization
-- browser execution
-
-That keeps the scope small enough to ship while still making the product feel original and useful.
-
-## What Success Looks Like
-
-A strong version of this product should make a reviewer feel:
-
-- “This solves a real student problem.”
-- “The stateful memory is doing meaningful work.”
-- “The agent is not just summarizing; it is helping execute.”
-- “This feels focused rather than overbuilt.”
+That local memory is important to the product. It is what turns the system from a one-off assistant into a stateful one.
 
 ## In One Sentence
 
-**Imprint is a local, stateful student browser agent that builds a personal context graph from profile, email, assignments, and deadlines, then uses that state to prioritize and execute academic tasks.**
+**Imprint is a local student agent that understands academic context across email, assignments, deadlines, and browser tasks, then helps the student take the next step.**
