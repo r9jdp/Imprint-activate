@@ -38,7 +38,7 @@ The result is a product that can help a student understand what is pending, what
 - read recent Gmail, Google Classroom, and Calendar context
 - keep a local student profile and memory on-device
 - answer questions using that live academic context
-- prioritize what matters based on the student’s goals and pending work
+- prioritize what matters based on the student's goals and pending work
 - open and navigate browser flows when action is required
 - create working documents for assignment-related tasks
 
@@ -46,9 +46,9 @@ The result is a product that can help a student understand what is pending, what
 
 A student opens Imprint and asks:
 
-**“What should I focus on right now?”**
+**"What should I focus on right now?"**
 
-Imprint can look across recent emails, pending coursework, deadlines, and the student’s saved profile, then surface the most relevant next task.
+Imprint can look across recent emails, pending coursework, deadlines, and the student's saved profile, then surface the most relevant next task.
 
 From there, the student can ask it to continue:
 
@@ -120,9 +120,71 @@ Examples include:
 
 ## Local-First
 
-Imprint stores the student’s profile and working context locally so the experience feels personal and inspectable rather than opaque.
+Imprint stores the student's profile and working context locally so the experience feels personal and inspectable rather than opaque.
 
 That local memory is important to the product. It is what turns the system from a one-off assistant into a stateful one.
+
+## Download
+
+I built and packaged the downloadable installer on Windows, because that is the machine I had available while building this project.
+
+For Windows users:
+
+- download the installer from the GitHub release
+- install the app normally
+- add your own local API keys before using it
+
+For macOS users:
+
+- the codebase supports macOS behavior and shortcuts
+- but the downloadable macOS app needs to be packaged on a Mac
+
+If you are on a Mac and want to build it yourself:
+
+1. clone this repository
+2. install Node.js, Rust, and Xcode Command Line Tools
+3. create a local `src-tauri/.env`
+4. add your own API keys there
+5. run:
+
+```bash
+npm install
+npm run tauri build
+```
+
+That will generate the macOS app bundle from the same codebase.
+
+## Local Setup
+
+Imprint is local-first, so users should provide their own API keys locally on their machine.
+
+Create a file at:
+
+```text
+src-tauri/.env
+```
+
+Add the required values:
+
+```env
+GEMINI_API_KEY=your_key_here
+ANTHROPIC_API_KEY=your_key_here
+GOOGLE_CLIENT_ID=your_google_oauth_client_id
+GOOGLE_CLIENT_SECRET=your_google_oauth_client_secret
+```
+
+Why this is done locally:
+
+- each user should control their own keys
+- personal Google access should be authorized by the user directly
+- the app should not ship with hardcoded credentials
+
+After adding the `.env` values:
+
+1. launch the app
+2. sign in with Google
+3. grant access to Gmail, Classroom, Calendar, Docs, and Drive when prompted
+4. start using the agent
 
 ## In One Sentence
 
