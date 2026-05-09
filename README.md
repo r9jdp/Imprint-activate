@@ -118,6 +118,10 @@ Examples include:
 - preparing a draft document
 - helping with a form-based workflow
 
+## Demo Video
+
+[![Watch the demo](https://img.youtube.com/vi/QoXDiaIr9b4/maxresdefault.jpg)](https://youtu.be/QoXDiaIr9b4)
+
 ## Local-First
 
 Imprint stores the student's profile and working context locally so the experience feels personal and inspectable rather than opaque.
