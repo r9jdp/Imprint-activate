@@ -8,11 +8,13 @@ mod types;
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
-use tauri::State;
+use tauri::{Emitter, State};
 
 use safety::scope::{ScopeConfig, ScopeGuard};
 use safety::undo::UndoStack;
 use safety::plan::PlanApprovalState;
+
+const GEMINI_MODEL: &str = "gemini-3.5-flash-lite";
 
 #[derive(serde::Serialize)]
 struct GoogleConnectionStatus {
@@ -79,6 +81,58 @@ fn read_runtime_env(name: &str) -> Option<String> {
     }
 
     None
+}
+
+async fn generate_gemini_response(prompt: &str) -> Result<String, String> {
+    let api_key = read_runtime_env("GEMINI_API_KEY")
+        .ok_or_else(|| "GEMINI_API_KEY is missing. Add it to src-tauri/.env and restart the app.".to_string())?;
+    let url = format!(
+        "https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent?key={}",
+        GEMINI_MODEL, api_key
+    );
+
+    let client = reqwest::Client::new();
+    let response = client
+        .post(url)
+        .json(&serde_json::json!({
+            "contents": [{
+                "role": "user",
+                "parts": [{ "text": prompt }]
+            }],
+            "generationConfig": { "temperature": 0.3 }
+        }))
+        .send()
+        .await
+        .map_err(|e| format!("Gemini request failed: {}", e))?;
+
+    let status = response.status();
+    let payload: serde_json::Value = response
+        .json()
+        .await
+        .map_err(|e| format!("Failed to parse Gemini response: {}", e))?;
+
+    if !status.is_success() {
+        let msg = payload["error"]["message"]
+            .as_str()
+            .unwrap_or("Gemini returned an error");
+        return Err(format!("Gemini error ({}): {}", status, msg));
+    }
+
+    let text = payload["candidates"][0]["content"]["parts"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|part| part["text"].as_str())
+        .collect::<Vec<_>>()
+        .join("\n")
+        .trim()
+        .to_string();
+
+    if text.is_empty() {
+        return Err("Gemini returned an empty response.".to_string());
+    }
+
+    Ok(text)
 }
 
 fn load_gcp_service_key() -> Result<GcpServiceAccountKey, String> {
@@ -251,7 +305,17 @@ async fn run_agent_command(
     browser_state: State<'_, browser::BrowserState>,
 ) -> Result<(), String> {
     state.0.store(false, Ordering::SeqCst);
-    agent::run_agent(prompt, history, window, state, scope_guard, undo_stack, plan_state, browser_state).await
+    let _ = (&history, &scope_guard, &undo_stack, &plan_state, &browser_state);
+    let answer = generate_gemini_response(&prompt).await?;
+    window
+        .emit(
+            "agent_event",
+            types::AgentEvent {
+                kind: "message".into(),
+                content: answer,
+            },
+        )
+        .map_err(|e| format!("Failed to send Gemini response to the app: {}", e))
 }
 
 // ─── Safety commands ───
@@ -443,19 +507,9 @@ async fn ingest_profile_documents(
 async fn ask_workspace_assistant(
     request: WorkspaceAssistantRequest,
 ) -> Result<String, String> {
-    let api_key = env!("GEMINI_API_KEY");
-    if api_key.trim().is_empty() {
-        return Err("GEMINI_API_KEY is missing. Add it to src-tauri/.env and rebuild the app.".to_string());
-    }
-
     if request.query.trim().is_empty() {
         return Err("Query cannot be empty.".to_string());
     }
-
-    let url = format!(
-        "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={}",
-        api_key
-    );
 
     let snapshot_json = serde_json::to_string_pretty(&request.snapshot)
         .map_err(|e| format!("Failed to serialize workspace snapshot: {}", e))?;
@@ -484,50 +538,7 @@ async fn ask_workspace_assistant(
         request.query.trim()
     );
 
-    let client = reqwest::Client::new();
-    let response = client
-        .post(url)
-        .json(&serde_json::json!({
-            "contents": [{
-                "role": "user",
-                "parts": [{ "text": prompt }]
-            }],
-            "generationConfig": {
-                "temperature": 0.3
-            }
-        }))
-        .send()
-        .await
-        .map_err(|e| format!("Gemini request failed: {}", e))?;
-
-    let status = response.status();
-    let payload: serde_json::Value = response
-        .json()
-        .await
-        .map_err(|e| format!("Failed to parse Gemini response: {}", e))?;
-
-    if !status.is_success() {
-        let msg = payload["error"]["message"]
-            .as_str()
-            .unwrap_or("Gemini returned an error");
-        return Err(format!("Gemini error ({}): {}", status, msg));
-    }
-
-    let text = payload["candidates"][0]["content"]["parts"]
-        .as_array()
-        .into_iter()
-        .flatten()
-        .filter_map(|part| part["text"].as_str())
-        .collect::<Vec<_>>()
-        .join("\n")
-        .trim()
-        .to_string();
-
-    if text.is_empty() {
-        return Err("Gemini returned an empty response.".to_string());
-    }
-
-    Ok(text)
+    generate_gemini_response(&prompt).await
 }
 
 use tauri::Manager;
@@ -711,8 +722,8 @@ async fn extract_profile_document(
     let client = reqwest::Client::new();
     let response = client
         .post(format!(
-            "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={}",
-            api_key
+            "https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent?key={}",
+            GEMINI_MODEL, api_key
         ))
         .json(&payload)
         .send()

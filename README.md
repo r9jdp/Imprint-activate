@@ -172,7 +172,6 @@ Add the required values:
 
 ```env
 GEMINI_API_KEY=your_key_here
-ANTHROPIC_API_KEY=your_key_here
 GOOGLE_CLIENT_ID=your_google_oauth_client_id
 GOOGLE_CLIENT_SECRET=your_google_oauth_client_secret
 ```

@@ -357,10 +357,13 @@ export default function App() {
     setAssistantAnswer('')
     setAgentActivity([])
     try {
-      await invoke('run_agent_command', {
-        prompt: buildStudentAgentPrompt(query.trim(), snapshot, studentProfile),
-        history: [],
+      const answer = await invoke<string>('ask_workspace_assistant', {
+        request: {
+          query: query.trim(),
+          snapshot,
+        },
       })
+      setAssistantAnswer(answer)
       setFeedback('Run completed.')
     } catch (e) {
       setError(normalizeError(e))
@@ -1225,35 +1228,6 @@ function splitList(value: string): string[] {
     .split(',')
     .map((item) => item.trim())
     .filter(Boolean)
-}
-
-function buildStudentAgentPrompt(query: string, snapshot: WorkspaceSnapshot, profile: StudentProfile | null): string {
-  const profileBlock = profile
-    ? JSON.stringify(profile, null, 2)
-    : 'No local student profile configured.'
-
-  const snapshotBlock = JSON.stringify(snapshot, null, 2)
-
-  return [
-    'You are Imprint, a stateful student agent.',
-    'Use the provided local student profile and live Workspace snapshot as context.',
-    'For Gmail, Google Classroom, Google Calendar, Google Docs, and Google Drive questions, use the Workspace snapshot and structured data first.',
-    'If the user is only asking for information that is already available in the snapshot, answer directly without opening Chrome.',
-    'For assignment drafts, notes, and Google Doc writing tasks, prefer the direct Google Docs API tool first instead of typing large content into the browser editor.',
-    'Only use browser_* tools when the user explicitly wants a browser action, when page interaction is required, or when the provided data is insufficient to answer correctly.',
-    'If the user request requires opening pages, navigating, clicking, typing, inspecting browser state, or interacting with web apps, use the browser_* tools yourself.',
-    'When the Workspace snapshot already contains direct links such as Gmail message links, Classroom course links, Classroom assignment links, or Calendar event links, navigate to those links first instead of opening a homepage and searching visually.',
-    'Do not ask the user to manually inspect elements or provide selectors unless absolutely necessary.',
-    'For Google Forms and other forms, fill only fields whose values are explicitly known from the user request, local profile, or Workspace data. If a value is unknown, leave that field untouched.',
-    'Never submit a form unless the user explicitly asked you to submit it.',
-    'Answer only what the user asked and stay grounded in the provided data.',
-    '',
-    `Local student profile:\n${profileBlock}`,
-    '',
-    `Workspace snapshot:\n${snapshotBlock}`,
-    '',
-    `User request:\n${query}`,
-  ].join('\n')
 }
 
 function parseToolName(raw: string): string {
