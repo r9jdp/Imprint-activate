@@ -1,0 +1,224 @@
+\documentclass[conference]{IEEEtran}
+
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage{booktabs}
+\usepackage{tabularx}
+\usepackage{array}
+\usepackage{url}
+\usepackage[hidelinks]{hyperref}
+
+\newcolumntype{Y}{>{\raggedright\arraybackslash}X}
+
+\title{AI-Based Email Summarization and Context-Grounded Reply Drafting Using Generative AI: Implementation of the Imprint Desktop Application}
+
+\author{
+\IEEEauthorblockN{
+\begin{tabular}{@{}>{\centering\arraybackslash}p{3.05in}@{\hspace{0.35in}}>{\centering\arraybackslash}p{3.05in}@{}}
+Rajdeep Pandey & Vruddhi Mule
+\end{tabular}}
+\IEEEauthorblockA{
+\begin{tabular}{@{}>{\centering\arraybackslash}p{3.05in}@{\hspace{0.35in}}>{\centering\arraybackslash}p{3.05in}@{}}
+Batch B3, Artificial Intelligence and Data Science & Batch B3, Artificial Intelligence and Data Science\\
+Roll No.: 16014223064 & Roll No.: 16014223099
+\end{tabular}\\
+KJ Somaiya School of Engineering}
+}
+
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+This paper documents Imprint, a desktop application that consolidates selected student workspace signals and uses a hosted generative model to answer grounded natural-language queries. The implemented system is built with a React and TypeScript user interface, a Rust backend packaged through Tauri, Google OAuth, and the Gemini Developer API. After authorization, the application retrieves recent Gmail message metadata and snippets, Google Classroom coursework, and Google Calendar events. It combines these records with an optional locally stored student profile and sends the resulting textual context, together with the user's query, to \texttt{gemini-3.5-flash-lite}. The interface provides separate workspace and assistant modes so that source records can be read without the query interface occupying the same view. The contribution of this work is an application-level context assembly and prompting pipeline; it does not train, fine-tune, or evaluate a new foundation model. The implementation supports on-demand summarization and can produce a response draft only when the user explicitly asks for one and the provided context is sufficient. It does not automatically send email, create a one-click smart-reply suggestion, or claim that generated output is correct without source support.
+\end{abstract}
+
+\begin{IEEEkeywords}
+generative AI, email summarization, Gemini API, Gmail API, Google Classroom, Google Calendar, Tauri, context-grounded generation
+\end{IEEEkeywords}
+
+\section{Introduction}
+
+Student communication and academic work are commonly distributed across email, coursework systems, and calendars. Imprint is a desktop application developed to present selected signals from Gmail, Google Classroom, and Google Calendar in one interface and to answer user questions about that assembled context. Its primary implemented email-oriented use case is a query such as ``summarize the latest emails.''
+
+The project uses a hosted generative model rather than training a model from scratch. Therefore, the term \emph{developed model} in this project refers to the implemented generative-AI integration: context collection, prompt construction, model invocation, response extraction, and user-interface presentation. This distinction is important. No dataset was curated for training, no weights were updated, and no fine-tuning job is part of the implementation.
+
+The system is deliberately constrained. It retrieves Gmail data with a read-only Gmail scope, renders the retrieved subject, sender, and snippet data, and sends a structured workspace snapshot to the configured Gemini model for a user-requested answer. It does not send email. It also does not automatically generate or display reply chips for every message. A reply draft can only be requested through the general assistant input and is limited to the context supplied to the model.
+
+\section{Project Scope and Objectives}
+
+The project objectives implemented in the current codebase are as follows:
+
+\begin{enumerate}
+    \item Authenticate a user with Google OAuth and retrieve selected Gmail, Classroom, and Calendar records.
+    \item Present Gmail, Classroom, and Calendar information in a desktop interface.
+    \item Persist an optional student profile locally and include it only as context for relevant assistant queries.
+    \item Construct a constrained prompt from the profile, workspace snapshot, and user query.
+    \item Submit the prompt to the Gemini Developer API and display the returned text as Markdown.
+    \item Allow the user to switch between a reading-oriented workspace view and a dedicated assistant view.
+\end{enumerate}
+
+Table~\ref{tab:scope} distinguishes the implemented scope from capabilities that are not implemented. This distinction prevents the system from being represented as a fully autonomous email client or a newly trained model.
+
+\begin{table}[t]
+\caption{Implemented Scope and Explicit Non-Scope}
+\label{tab:scope}
+\centering
+\footnotesize
+\begin{tabularx}{\columnwidth}{@{}p{0.26\columnwidth}Y@{}}
+\toprule
+\textbf{Area} & \textbf{Implemented Behavior} \\
+\midrule
+Email display & Recent Gmail records are represented by sender, subject, snippet, optional internal date, and a web link. \\
+Email summarization & A user can request a summary through the assistant input; the workspace snapshot is included in the prompt. \\
+Reply drafting & A user may ask for a draft in the general assistant input. There is no dedicated quick-reply control and no automatic reply generation. \\
+Email sending & Not implemented. The Gmail scope used for retrieval is read-only, and no Gmail send call is implemented. \\
+Model development & No model training, fine-tuning, benchmark, or model-weight modification is implemented. \\
+Workspace actions & The code includes browser and Google Docs support, but the email summarization flow described in this paper does not send email or submit forms. \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\section{System Architecture}
+
+\subsection{Desktop Application Structure}
+
+Imprint is a Tauri desktop application. Tauri packages a web frontend with a Rust application backend; its documentation describes a project structure in which web assets are built and bundled with the Rust application \cite{tauri_structure}. In Imprint, the frontend uses React and TypeScript, while the backend uses Rust. The Tauri configuration specifies a local Vite development URL and a Windows desktop window configuration. Frontend actions call Rust commands through Tauri's invocation mechanism rather than through a separately started HTTP backend.
+
+The main components are:
+
+\begin{itemize}
+    \item \textbf{React user interface:} Renders the workspace, source tabs, local-profile form, assistant input, status messages, and Markdown response.
+    \item \textbf{Rust/Tauri backend:} Implements OAuth, API retrieval, local profile persistence, Gemini requests, and Tauri commands.
+    \item \textbf{Google Workspace APIs:} Provide Gmail message listings/details, Classroom courses/coursework, and Calendar events.
+    \item \textbf{Gemini Developer API:} Produces the text response for an assembled context and user query.
+    \item \textbf{Local storage directory:} Stores OAuth tokens and the student profile under the user's home directory in \texttt{.imprint/student-agent}.
+\end{itemize}
+
+The application does not expose a standalone backend server for normal desktop use. During development, Tauri starts the frontend development command and loads it in the desktop webview; the Rust process provides the invoked commands.
+
+\subsection{Google Workspace Data Retrieval}
+
+Google OAuth is configured with the identity scopes \texttt{openid}, \texttt{email}, and \texttt{profile}, along with the Gmail read-only, Classroom read-only, and Calendar read-only scopes. The declared OAuth configuration also includes \texttt{drive.file} and \texttt{documents} scopes because the codebase contains Google Docs creation support. These additional scopes should not be described as read-only.
+
+For the email-oriented flow, the Gmail API is used to list and retrieve messages. The Gmail API exposes message-list and message-get operations \cite{gmail_api}. The application stores the sender, subject, snippet, optional date, and a Gmail web link in its \texttt{GmailMessage} structure. The summarized email context is therefore based on these stored fields, not on a claim that the application performs complete semantic parsing of every mailbox message.
+
+Classroom integration retrieves courses and coursework. The Google Classroom REST resources define courses and coursework data, including title, state, alternate link, due date, and due time \cite{classroom_coursework}. Calendar integration retrieves events from the user's primary calendar using the events-list resource \cite{calendar_events}. The application stores each selected Calendar item as a summary, optional start/end time, and optional HTML link.
+
+\subsection{Workspace Snapshot}
+
+The backend creates a \texttt{WorkspaceSnapshot} containing an optional Google profile and three collections: Gmail messages, Classroom assignments, and Calendar events. This snapshot is passed to the assistant command from the frontend. The application interface displays one source at a time through Gmail, Classroom, and Calendar tabs. The separation is intentional: the reading view presents one source in a larger scrollable pane instead of compressing all three sources into small columns.
+
+\section{Generative-AI Pipeline}
+
+\subsection{Selected Model and Invocation}
+
+The implemented model identifier is \texttt{gemini-3.5-flash-lite}. Google lists this model as a stable Gemini model and describes it as a cost-efficient option for high-throughput work \cite{gemini_models,gemini_lite}. The application invokes the Gemini Developer API's \texttt{generateContent} endpoint with the locally configured \texttt{GEMINI\_API\_KEY}. The key is read from the process environment or a local \texttt{.env} file at runtime for the query path.
+
+The request body contains a single user content item and a generation configuration with temperature set to 0.3. The response handler parses the returned JSON, collects text fields from the first candidate's content parts, and returns the resulting text to the frontend. A non-success HTTP status is converted into an application error containing the provider error message. The implementation does not stream partial tokens to the interface.
+
+\subsection{Prompt Construction}
+
+For each assistant request, the backend builds a textual prompt from three inputs:
+
+\begin{enumerate}
+    \item the user query;
+    \item a serialized current workspace snapshot; and
+    \item the locally stored student profile, if present.
+\end{enumerate}
+
+The implemented prompt instructs the model to use profile data only when directly relevant, use Gmail/Classroom/Calendar context to answer the request, avoid unsupported assumptions, distinguish facts from possible inferences when necessary, and remain concise. It also instructs the model not to claim statuses such as defaulter, selected, or rejected unless the supplied source data explicitly states them. These are prompt-level constraints; they are not a mathematical guarantee that every model output is error-free.
+
+The formulation can be represented as
+
+\begin{equation}
+P = I \oplus L \oplus W \oplus Q,
+\end{equation}
+
+where $I$ is the fixed instruction text, $L$ is the optional local-profile text, $W$ is the serialized workspace snapshot, $Q$ is the user query, and $\oplus$ denotes text concatenation. The generated response is
+
+\begin{equation}
+R = \text{GeminiGenerateContent}(P;\, m,\, T),
+\end{equation}
+
+where $m$ is \texttt{gemini-3.5-flash-lite} and $T=0.3$ is the configured temperature. These equations describe the implemented request assembly; they do not represent a training objective or a learned model developed by this project.
+
+\subsection{Email Summarization and Reply Drafting}
+
+Email summarization is implemented as an on-demand natural-language query over the current workspace snapshot. For example, the user can request a summary of recent emails. The model receives the available sender, subject, and snippet fields for the retrieved Gmail records and returns text that the interface renders as Markdown.
+
+The same input can be used to request a reply draft. This is a \emph{context-grounded drafting} capability, not an autonomous smart-reply system. The implementation has no per-message reply buttons, no automatic reply suggestions, no recipient selection, no Gmail compose call, and no Gmail send call. If a requested draft requires information that is absent from the snapshot or profile, the model prompt directs the system to avoid inventing unsupported details.
+
+\section{Local Profile and Document Handling}
+
+The optional student profile contains identity, degree/program, semester, free-text personal context, priorities, signals not to ignore, important courses, preferred help mode, reminder style, output style, and uploaded-document metadata. The application persists this profile as \texttt{student\_profile.json} and also writes a Markdown representation named \texttt{user.md} to the local Imprint storage directory.
+
+When a user selects profile documents, the implementation calls a Gemini-based document extraction command and saves the returned extracted summary and text with the document metadata. This paper does not claim that document extraction is locally executed: the selected document content is submitted to Gemini for that extraction operation. Similarly, when the assistant is queried, the selected profile text and workspace snapshot are included in the Gemini request. Thus, the application keeps profile files and OAuth token files locally, but the relevant prompt content is transmitted to the configured Gemini API for generation.
+
+\section{User Interface Design}
+
+The current interface uses two main modes:
+
+\begin{itemize}
+    \item \textbf{Workspace mode:} Presents a top-level source selector for Gmail, Classroom, and Calendar. The active source occupies a larger reader pane with its own scrollbar.
+    \item \textbf{Ask Imprint mode:} Replaces the workspace pane with a dedicated query input and a large scrollable response surface. The transition is implemented with an opacity and vertical-position animation.
+\end{itemize}
+
+This layout change is an interface decision, not an AI capability. Its purpose is to prevent the assistant response from reducing the readable area for Gmail, Classroom, and Calendar items. Browser controls are retained behind a compact disclosure in the sidebar, while connection/profile controls remain visible.
+
+\section{Privacy, Security, and Operational Boundaries}
+
+The following properties and limitations follow directly from the implementation:
+
+\begin{itemize}
+    \item OAuth tokens are written as JSON in the local Imprint storage directory. The inspected implementation does not add an encryption layer around that file.
+    \item The Gmail retrieval scope is read-only. The code shown for the email workflow has no send operation.
+    \item The OAuth scope list includes Google Docs and Drive file permissions for separately implemented document features; therefore, the whole application should not be characterized as globally read-only.
+    \item The Gemini API key is intended to be supplied locally through environment configuration or a local \texttt{.env} file. The project does not hardcode a key in the source.
+    \item Workspace and profile context used for a query are sent to the external Gemini API. Users should therefore understand that ``local-first'' storage does not mean all inference occurs on-device.
+    \item The application displays provider failures such as authentication, availability, or model errors to the user. It does not silently replace a failed response with fabricated content.
+\end{itemize}
+
+\section{Verification and Limitations}
+
+This project report does not present a controlled accuracy experiment, latency benchmark, user study, or comparison against another summarization system. Consequently, it makes no quantitative claim about summary quality, time saved, hallucination rate, precision, recall, or user satisfaction. The implemented software was checked by compiling the React frontend and the Rust backend, and the selected Gemini model was validated against the configured key with a minimal generation request during development.
+
+The present implementation has the following limitations:
+
+\begin{itemize}
+    \item It summarizes only the fields collected into the snapshot; Gmail message bodies are not represented in the frontend \texttt{GmailMessage} structure used for the assistant snapshot.
+    \item It has no automatic message classification, ranking model, or learned priority estimator. The displayed priority is selected in application code from available assignment, Gmail, or Calendar fields.
+    \item It has no automatic reply-send workflow and no dedicated reply-generation UI.
+    \item Prompt instructions reduce unsupported claims but do not replace validation by the user against the original Gmail, Classroom, or Calendar records.
+    \item The model is an externally hosted Gemini model. Availability and output behavior depend on the configured API key, model availability, and remote service response.
+\end{itemize}
+
+\section{Conclusion}
+
+Imprint implements a practical generative-AI application for context-grounded student workspace questions, including recent-email summarization. The system gathers selected Gmail, Classroom, and Calendar records after OAuth authorization, combines them with optional local profile context, and sends a constrained prompt to \texttt{gemini-3.5-flash-lite}. The response is displayed in a dedicated assistant mode, while the workspace mode provides a larger reading surface for individual sources.
+
+The work should be evaluated as an application integration and context-orchestration project rather than as a newly trained GenAI model. Its defensible contribution is the implemented end-to-end flow from authenticated workspace data, through explicit prompt construction and hosted generation, to a readable desktop interface. Automatic email sending, autonomous smart replies, model training, and quantitative performance claims are outside the current implementation and are not claimed by this paper.
+
+\begin{thebibliography}{00}
+
+\bibitem{gemini_models}
+Google AI for Developers, ``Gemini models,'' \emph{Gemini API Documentation}. [Online]. Available: \url{https://ai.google.dev/gemini-api/docs/models}. Accessed: Aug. 30, 2026.
+
+\bibitem{gemini_lite}
+Google AI for Developers, ``Gemini 3.5 Flash-Lite,'' \emph{Gemini API Documentation}. [Online]. Available: \url{https://ai.google.dev/gemini-api/docs/models/gemini-3.5-flash-lite}. Accessed: Aug. 30, 2026.
+
+\bibitem{gmail_api}
+Google for Developers, ``Gmail API: REST resource \texttt{users.messages},'' [Online]. Available: \url{https://developers.google.com/workspace/gmail/api/reference/rest/v1/users.messages}. Accessed: Aug. 30, 2026.
+
+\bibitem{classroom_coursework}
+Google for Developers, ``Google Classroom API: REST resource \texttt{courses.courseWork},'' [Online]. Available: \url{https://developers.google.com/workspace/classroom/reference/rest/v1/courses.courseWork}. Accessed: Aug. 30, 2026.
+
+\bibitem{calendar_events}
+Google for Developers, ``Google Calendar API: Events list,'' [Online]. Available: \url{https://developers.google.com/calendar/api/v3/reference/events/list}. Accessed: Aug. 30, 2026.
+
+\bibitem{tauri_structure}
+Tauri, ``Project structure,'' \emph{Tauri v2 Documentation}. [Online]. Available: \url{https://v2.tauri.app/start/project-structure/}. Accessed: Aug. 30, 2026.
+
+\end{thebibliography}
+
+\end{document}

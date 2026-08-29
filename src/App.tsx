@@ -11,7 +11,6 @@ import {
   GoogleLogo,
   GraduationCap,
   Link,
-  Square,
   SignOut,
   Sparkle,
 } from '@phosphor-icons/react'
@@ -69,6 +68,9 @@ type AgentEvent = {
   kind: string
   content: string
 }
+
+type WorkspaceTab = 'gmail' | 'classroom' | 'calendar'
+type MainView = 'workspace' | 'assistant'
 
 type ProfileDocument = {
   name: string
@@ -148,6 +150,8 @@ export default function App() {
   const [showOnboarding, setShowOnboarding] = useState(false)
   const [browserConnected, setBrowserConnected] = useState(false)
   const [agentActivity, setAgentActivity] = useState<string[]>([])
+  const [activeWorkspaceTab, setActiveWorkspaceTab] = useState<WorkspaceTab>('gmail')
+  const [activeMainView, setActiveMainView] = useState<MainView>('workspace')
 
   useEffect(() => {
     setThemeMode('dark')
@@ -372,20 +376,6 @@ export default function App() {
     }
   }
 
-  async function stopAssistant() {
-    setFeedback('')
-    setError('')
-    try {
-      await invoke('interrupt_agent')
-      setAgentActivity((current) => [...current, 'Stopped by user.'].slice(-8))
-      setFeedback('Stopped the current run.')
-    } catch (e) {
-      setError(normalizeError(e))
-    } finally {
-      setBusy('idle')
-    }
-  }
-
   const profileName = snapshot?.profile?.name || 'Student'
   const topPriority = useMemo(() => {
     if (!snapshot) return null
@@ -410,144 +400,85 @@ export default function App() {
           boxShadow: colors.containerShadow,
         }}
       >
-        <div className="h-full grid grid-cols-[320px_1fr]">
+        <div className="h-full grid grid-cols-[248px_1fr]">
           <aside
-            className="p-5 border-r flex flex-col overflow-y-auto"
+            className="p-4 border-r flex flex-col overflow-y-auto"
             style={{ borderColor: colors.containerBorder, background: colors.containerBgCollapsed }}
           >
-            <div className="flex items-start gap-3 mb-5">
+            <div className="flex items-center gap-3 mb-6">
               <div
-                className="w-11 h-11 rounded-2xl flex items-center justify-center"
+                className="w-10 h-10 rounded-xl flex items-center justify-center"
                 style={{ background: colors.accentLight, color: colors.accent }}
               >
-                <GraduationCap size={24} weight="duotone" />
+                <GraduationCap size={22} weight="duotone" />
               </div>
               <div>
-                <div className="text-[20px] font-semibold" style={{ color: colors.textPrimary }}>
+                <div className="text-[18px] font-semibold" style={{ color: colors.textPrimary }}>
                   Imprint
                 </div>
-                <div className="text-[12px] leading-5" style={{ color: colors.textSecondary }}>
-                  Stateful student desktop agent
+                <div className="text-[11px]" style={{ color: colors.textTertiary }}>
+                  Student workspace
                 </div>
               </div>
             </div>
 
-            <InfoCard title="Overlay">
-              <div className="text-[13px] leading-6" style={{ color: colors.textSecondary }}>
-                Call the app anytime with{' '}
-                <span
-                  className="px-2 py-1 rounded-md"
-                  style={{ background: colors.surfaceSecondary, color: colors.textPrimary }}
-                >
-                  {shortcutLabel}
-                </span>
+            <div className="rounded-xl p-4 mb-3" style={{ background: colors.surfacePrimary, border: `1px solid ${colors.containerBorder}` }}>
+              <div className="flex items-center justify-between gap-2 mb-3">
+                <div className="text-[11px] uppercase tracking-[0.16em]" style={{ color: colors.textTertiary }}>Google workspace</div>
+                <StatusPill configured={status.configured} connected={status.connected} />
               </div>
-            </InfoCard>
-
-            <InfoCard
-              title="Browser"
-              action={<StatusPill configured={browserConnected} connected={browserConnected} configuredLabel="Ready" missingLabel="Idle" />}
-            >
-              <div className="space-y-3">
-                <div className="text-[12px] leading-6" style={{ color: colors.textSecondary }}>
-                  Launch and control an isolated Chrome session directly from Imprint.
-                </div>
-                <div className="grid grid-cols-2 gap-2">
-                  <button
-                    onClick={() => void connectBrowser()}
-                    disabled={busy !== 'idle'}
-                    className="h-10 rounded-xl text-[12px] font-medium"
-                    style={{ background: colors.accent, color: colors.textOnAccent, opacity: busy !== 'idle' ? 0.6 : 1 }}
-                  >
-                    Connect
-                  </button>
-                  <button
-                    onClick={() => void setupBrowser()}
-                    disabled={busy !== 'idle'}
-                    className="h-10 rounded-xl text-[12px] font-medium"
-                    style={{
-                      background: colors.surfaceSecondary,
-                      color: colors.textPrimary,
-                      border: `1px solid ${colors.containerBorder}`,
-                      opacity: busy !== 'idle' ? 0.6 : 1,
-                    }}
-                  >
-                    Setup Chrome
-                  </button>
-                </div>
-                <button
-                  onClick={() => void disconnectBrowser()}
-                  disabled={busy !== 'idle' || !browserConnected}
-                  className="w-full h-10 rounded-xl text-[12px] font-medium"
-                  style={{
-                    background: colors.statusErrorBg,
-                    color: colors.statusError,
-                    border: `1px solid ${colors.containerBorder}`,
-                    opacity: busy !== 'idle' || !browserConnected ? 0.6 : 1,
-                  }}
-                >
-                  Disconnect browser
-                </button>
+              <div className="text-[12px] leading-5 mb-3" style={{ color: colors.textSecondary }}>
+                {status.connected ? `Connected as ${profileName}.` : 'Connect to load Gmail, Classroom, and Calendar.'}
               </div>
-            </InfoCard>
+              <button
+                onClick={signIn}
+                disabled={!status.configured || busy !== 'idle' || status.connected}
+                className="w-full h-10 rounded-lg text-[12px] font-medium flex items-center justify-center gap-2"
+                style={{ background: colors.accent, color: colors.textOnAccent, opacity: !status.configured || busy !== 'idle' || status.connected ? 0.6 : 1 }}
+              >
+                <GoogleLogo size={15} weight="fill" />
+                {busy === 'signing-in' ? 'Waiting for approval...' : status.connected ? 'Google connected' : 'Connect Google'}
+              </button>
+            </div>
 
-            <InfoCard
-              title="Student Profile"
-              action={
-                <StatusPill
-                  configured={Boolean(studentProfile)}
-                  connected={false}
-                  configuredLabel={profileStatusLabel}
-                  missingLabel="Not set"
-                />
-              }
-            >
-              <div className="space-y-3">
-                <div className="text-[12px] leading-6" style={{ color: colors.textSecondary }}>
-                  {studentProfile
-                    ? `Local memory is active for ${studentProfile.full_name || 'this student profile'} with ${studentProfile.documents.length} saved document${studentProfile.documents.length === 1 ? '' : 's'}.`
-                    : 'Complete onboarding so Imprint can prioritize based on your goals, courses, and must-not-ignore signals.'}
-                </div>
-                <button
-                  onClick={() => setShowOnboarding((current) => !current)}
-                  className="w-full h-10 rounded-xl text-[12px] font-medium"
-                  style={{
-                    background: colors.surfaceSecondary,
-                    color: colors.textPrimary,
-                    border: `1px solid ${colors.containerBorder}`,
-                  }}
-                >
-                  {studentProfile ? 'Edit local profile' : 'Complete onboarding'}
-                </button>
+            <div className="rounded-xl p-4 mb-3" style={{ background: colors.surfacePrimary, border: `1px solid ${colors.containerBorder}` }}>
+              <div className="flex items-center justify-between gap-2 mb-2">
+                <div className="text-[11px] uppercase tracking-[0.16em]" style={{ color: colors.textTertiary }}>Local profile</div>
+                <StatusPill configured={Boolean(studentProfile)} connected={false} configuredLabel={profileStatusLabel} missingLabel="Not set" />
               </div>
-            </InfoCard>
-
-            <InfoCard
-              title="Google Sign-In"
-              action={<StatusPill configured={status.configured} connected={status.connected} />}
-            >
-              <div>
-                <button
-                  onClick={signIn}
-                  disabled={!status.configured || busy !== 'idle'}
-                  className="w-full h-11 rounded-xl text-[13px] font-medium flex items-center justify-center gap-2"
-                  style={{
-                    background: colors.accent,
-                    color: colors.textOnAccent,
-                    opacity: !status.configured || busy !== 'idle' ? 0.6 : 1,
-                  }}
-                >
-                  <GoogleLogo size={16} weight="fill" />
-                  {busy === 'signing-in' ? 'Waiting for Google approval...' : 'Sign in with Google'}
-                </button>
+              <div className="text-[12px] leading-5 mb-3" style={{ color: colors.textSecondary }}>
+                {studentProfile ? `${studentProfile.full_name || 'Student'} · ${studentProfile.documents.length} saved document${studentProfile.documents.length === 1 ? '' : 's'}` : 'Add context to personalize summaries and priorities.'}
               </div>
-            </InfoCard>
+              <button
+                onClick={() => {
+                  setShowOnboarding((current) => !current)
+                  setActiveMainView('assistant')
+                }}
+                className="w-full h-9 rounded-lg text-[12px] font-medium"
+                style={{ background: colors.surfaceSecondary, color: colors.textPrimary, border: `1px solid ${colors.containerBorder}` }}
+              >
+                {studentProfile ? 'Edit profile' : 'Set up profile'}
+              </button>
+            </div>
 
-            <div className="mt-auto flex items-center gap-2 pt-1">
+            <details className="rounded-xl px-4 py-3" style={{ background: colors.surfacePrimary, border: `1px solid ${colors.containerBorder}` }}>
+              <summary className="cursor-pointer text-[12px] font-medium" style={{ color: colors.textSecondary }}>
+                Browser tools {browserConnected ? '· ready' : ''}
+              </summary>
+              <div className="grid grid-cols-2 gap-2 mt-3">
+                <button onClick={() => void connectBrowser()} disabled={busy !== 'idle'} className="h-9 rounded-lg text-[11px] font-medium" style={{ background: colors.accent, color: colors.textOnAccent, opacity: busy !== 'idle' ? 0.6 : 1 }}>Connect</button>
+                <button onClick={() => void setupBrowser()} disabled={busy !== 'idle'} className="h-9 rounded-lg text-[11px] font-medium" style={{ background: colors.surfaceSecondary, color: colors.textPrimary, border: `1px solid ${colors.containerBorder}`, opacity: busy !== 'idle' ? 0.6 : 1 }}>Setup</button>
+              </div>
+              <button onClick={() => void disconnectBrowser()} disabled={busy !== 'idle' || !browserConnected} className="w-full h-9 rounded-lg mt-2 text-[11px] font-medium" style={{ background: colors.statusErrorBg, color: colors.statusError, opacity: busy !== 'idle' || !browserConnected ? 0.6 : 1 }}>Disconnect browser</button>
+            </details>
+
+            <div className="mt-auto pt-4">
+              <div className="text-[10px] mb-2" style={{ color: colors.textTertiary }}>Open anytime · {shortcutLabel}</div>
+              <div className="flex items-center gap-2">
               <button
                 onClick={() => void refreshSnapshot()}
                 disabled={!status.connected || busy !== 'idle'}
-                className="flex-1 h-11 rounded-xl text-[13px] font-medium flex items-center justify-center gap-2"
+                className="flex-1 h-10 rounded-lg text-[12px] font-medium flex items-center justify-center gap-2"
                 style={{
                   background: colors.surfaceSecondary,
                   color: colors.textPrimary,
@@ -561,7 +492,7 @@ export default function App() {
               <button
                 onClick={disconnect}
                 disabled={!status.connected || busy !== 'idle'}
-                className="w-11 h-11 rounded-xl flex items-center justify-center"
+                className="w-10 h-10 rounded-lg flex items-center justify-center"
                 style={{
                   background: colors.statusErrorBg,
                   color: colors.statusError,
@@ -571,25 +502,25 @@ export default function App() {
               >
                 <SignOut size={16} />
               </button>
+              </div>
             </div>
           </aside>
 
-          <main className="p-6 overflow-y-auto overflow-x-hidden flex flex-col min-h-0">
-            <div className="flex items-start justify-between gap-4 mb-5 shrink-0">
+          <main className="p-6 overflow-y-auto overflow-x-hidden min-h-0">
+            <div className="flex items-start justify-between gap-6 mb-5">
               <div>
-                <div className="text-[13px] uppercase tracking-[0.18em] mb-2" style={{ color: colors.textTertiary }}>
+                <div className="text-[11px] uppercase tracking-[0.18em] mb-2" style={{ color: colors.textTertiary }}>
                   Workspace Status
                 </div>
-                <h1 className="text-[30px] leading-[1.1] font-semibold" style={{ color: colors.textPrimary }}>
+                <h1 className="text-[28px] leading-[1.1] font-semibold" style={{ color: colors.textPrimary }}>
                   {status.connected ? `Ready, ${profileName}` : 'Connect your Google workspace'}
                 </h1>
-                <p className="text-[14px] mt-2 max-w-[680px]" style={{ color: colors.textSecondary }}>
-                  Start with live Gmail, Classroom, and Calendar reads. Add your local student profile so Imprint can
-                  personalize what matters before we layer browser actions and graph memory on top.
+                <p className="text-[13px] mt-2 max-w-[560px] leading-6" style={{ color: colors.textSecondary }}>
+                  Your live mail, coursework, and calendar are organized here. Ask for a summary whenever you need the bigger picture.
                 </p>
               </div>
               <div
-                className="rounded-2xl px-4 py-3 min-w-[260px]"
+                className="rounded-xl px-4 py-3 w-[250px] shrink-0"
                 style={{ background: colors.surfacePrimary, border: `1px solid ${colors.containerBorder}` }}
               >
                 <div className="text-[11px] uppercase tracking-[0.18em] mb-2" style={{ color: colors.textTertiary }}>
@@ -598,8 +529,8 @@ export default function App() {
                 <div className="text-[14px] font-medium" style={{ color: colors.textPrimary }}>
                   {topPriority || 'No live ranking yet'}
                 </div>
-                <div className="text-[12px] mt-2" style={{ color: colors.textSecondary }}>
-                  This will become the first stateful recommendation once profile onboarding is added.
+                <div className="text-[12px] mt-2 leading-5" style={{ color: colors.textSecondary }}>
+                  Based on your latest workspace signal.
                 </div>
               </div>
             </div>
@@ -611,7 +542,7 @@ export default function App() {
                   initial={{ opacity: 0, y: -8 }}
                   animate={{ opacity: 1, y: 0 }}
                   exit={{ opacity: 0, y: -6 }}
-                  className="rounded-2xl px-4 py-3 mb-5 text-[13px] shrink-0"
+                  className="rounded-xl px-4 py-3 mb-5 text-[13px]"
                   style={{
                     background: error ? colors.statusErrorBg : colors.statusCompleteBg,
                     color: error ? colors.statusError : colors.statusComplete,
@@ -623,80 +554,113 @@ export default function App() {
               )}
             </AnimatePresence>
 
-            <div className="grid grid-cols-3 gap-4 min-h-0 flex-1 overflow-hidden">
-              <DataColumn
-                title="Gmail"
-                icon={<EnvelopeSimple size={16} weight="duotone" />}
-                subtitle="Recent inbox signals"
-                items={snapshot?.gmail || []}
-                empty="Connect Google to read recent inbox messages."
-                renderItem={(item) => (
-                  <div>
-                    <div className="text-[12px] font-medium truncate" style={{ color: colors.textPrimary }}>
-                      {(item as GmailMessage).subject || '(no subject)'}
-                    </div>
-                    <div className="text-[11px] mt-1 truncate" style={{ color: colors.textTertiary }}>
-                      {(item as GmailMessage).from}
-                    </div>
-                    <div className="text-[12px] mt-2 leading-5" style={{ color: colors.textSecondary }}>
-                      {(item as GmailMessage).snippet}
-                    </div>
-                    {(item as GmailMessage).web_link && (
-                      <ExternalLinkButton href={(item as GmailMessage).web_link!} label="Open in Imprint browser" mode="browser" />
-                    )}
-                  </div>
-                )}
-              />
-              <DataColumn
-                title="Classroom"
-                icon={<ChalkboardTeacher size={16} weight="duotone" />}
-                subtitle="Pending coursework"
-                items={snapshot?.classroom || []}
-                empty="Connect Google to read course work."
-                renderItem={(item) => {
-                  const assignment = item as ClassroomAssignment
-                  return (
-                    <div>
-                      <div className="text-[11px] uppercase tracking-[0.14em]" style={{ color: colors.textTertiary }}>
-                        {assignment.course_name}
-                      </div>
-                      <div className="text-[13px] font-medium mt-1" style={{ color: colors.textPrimary }}>
-                        {assignment.title}
-                      </div>
-                      <div className="text-[12px] mt-2" style={{ color: colors.textSecondary }}>
-                        Due {formatDue(assignment.due_date, assignment.due_time)}
-                      </div>
-                      {assignment.alternate_link && (
-                        <ExternalLinkButton href={assignment.alternate_link} label="Open in Imprint browser" mode="browser" />
-                      )}
-                    </div>
-                  )
+            <div className="inline-flex items-center gap-1 p-1 rounded-lg mb-4" style={{ background: colors.surfacePrimary, border: `1px solid ${colors.containerBorder}` }}>
+              <button
+                onClick={() => setActiveMainView('workspace')}
+                className="h-9 px-3 rounded-md text-[12px] font-medium"
+                style={{ background: activeMainView === 'workspace' ? colors.surfaceSecondary : 'transparent', color: activeMainView === 'workspace' ? colors.textPrimary : colors.textSecondary }}
+              >
+                Workspace
+              </button>
+              <button
+                onClick={() => {
+                  setShowOnboarding(false)
+                  setActiveMainView('assistant')
                 }}
-              />
-              <DataColumn
-                title="Calendar"
-                icon={<CalendarDots size={16} weight="duotone" />}
-                subtitle="Upcoming deadlines"
-                items={snapshot?.calendar || []}
-                empty="Connect Google to read upcoming events."
-                renderItem={(item) => {
-                  const event = item as CalendarEvent
-                  return (
-                    <div>
-                      <div className="text-[13px] font-medium" style={{ color: colors.textPrimary }}>
-                        {event.summary}
-                      </div>
-                      <div className="text-[12px] mt-2" style={{ color: colors.textSecondary }}>
-                        {event.start ? formatDate(event.start) : 'No start time'}
-                      </div>
-                      {event.html_link && <ExternalLinkButton href={event.html_link} label="Open in Imprint browser" mode="browser" />}
-                    </div>
-                  )
-                }}
-              />
+                className="h-9 px-3 rounded-md text-[12px] font-medium inline-flex items-center gap-2"
+                style={{ background: activeMainView === 'assistant' ? colors.accent : 'transparent', color: activeMainView === 'assistant' ? colors.textOnAccent : colors.textSecondary }}
+              >
+                <Sparkle size={14} weight="fill" />
+                Ask Imprint
+              </button>
             </div>
 
-            {showOnboarding ? (
+            <AnimatePresence mode="wait">
+              <motion.div
+                key={activeMainView === 'workspace' ? 'workspace' : showOnboarding ? 'profile' : 'assistant'}
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -8 }}
+                transition={{ duration: 0.18 }}
+              >
+            {activeMainView === 'workspace' ? (
+            <section>
+              <div className="flex items-center gap-2 mb-3" role="tablist" aria-label="Workspace sources">
+                {([
+                  ['gmail', 'Gmail', EnvelopeSimple, snapshot?.gmail.length || 0],
+                  ['classroom', 'Classroom', ChalkboardTeacher, snapshot?.classroom.length || 0],
+                  ['calendar', 'Calendar', CalendarDots, snapshot?.calendar.length || 0],
+                ] as const).map(([id, label, Icon, count]) => {
+                  const active = activeWorkspaceTab === id
+                  return (
+                    <button
+                      key={id}
+                      role="tab"
+                      aria-selected={active}
+                      onClick={() => setActiveWorkspaceTab(id)}
+                      className="h-10 px-3 rounded-lg text-[12px] font-medium inline-flex items-center gap-2"
+                      style={{
+                        background: active ? colors.surfacePrimary : 'transparent',
+                        color: active ? colors.textPrimary : colors.textSecondary,
+                        border: `1px solid ${active ? colors.containerBorder : 'transparent'}`,
+                      }}
+                    >
+                      <Icon size={16} weight="duotone" style={{ color: active ? colors.accent : undefined }} />
+                      {label}
+                      <span className="text-[10px]" style={{ color: colors.textTertiary }}>{count}</span>
+                    </button>
+                  )
+                })}
+              </div>
+
+              <div className="h-[430px] min-h-0">
+                {activeWorkspaceTab === 'gmail' && (
+                  <DataColumn
+                    title="Gmail"
+                    icon={<EnvelopeSimple size={17} weight="duotone" />}
+                    subtitle="Recent inbox signals"
+                    items={snapshot?.gmail || []}
+                    empty="Connect Google to read recent inbox messages."
+                    renderItem={(item) => (
+                      <div>
+                        <div className="text-[14px] font-medium" style={{ color: colors.textPrimary }}>{(item as GmailMessage).subject || '(no subject)'}</div>
+                        <div className="text-[12px] mt-1" style={{ color: colors.textTertiary }}>{(item as GmailMessage).from}</div>
+                        <div className="text-[13px] mt-3 leading-6" style={{ color: colors.textSecondary }}>{(item as GmailMessage).snippet}</div>
+                        {(item as GmailMessage).web_link && <ExternalLinkButton href={(item as GmailMessage).web_link!} label="Open in Imprint browser" mode="browser" />}
+                      </div>
+                    )}
+                  />
+                )}
+                {activeWorkspaceTab === 'classroom' && (
+                  <DataColumn
+                    title="Classroom"
+                    icon={<ChalkboardTeacher size={17} weight="duotone" />}
+                    subtitle="Pending coursework"
+                    items={snapshot?.classroom || []}
+                    empty="Connect Google to read course work."
+                    renderItem={(item) => {
+                      const assignment = item as ClassroomAssignment
+                      return <div><div className="text-[11px] uppercase tracking-[0.14em]" style={{ color: colors.textTertiary }}>{assignment.course_name}</div><div className="text-[14px] font-medium mt-2" style={{ color: colors.textPrimary }}>{assignment.title}</div><div className="text-[13px] mt-3" style={{ color: colors.textSecondary }}>Due {formatDue(assignment.due_date, assignment.due_time)}</div>{assignment.alternate_link && <ExternalLinkButton href={assignment.alternate_link} label="Open in Imprint browser" mode="browser" />}</div>
+                    }}
+                  />
+                )}
+                {activeWorkspaceTab === 'calendar' && (
+                  <DataColumn
+                    title="Calendar"
+                    icon={<CalendarDots size={17} weight="duotone" />}
+                    subtitle="Upcoming deadlines"
+                    items={snapshot?.calendar || []}
+                    empty="Connect Google to read upcoming events."
+                    renderItem={(item) => {
+                      const event = item as CalendarEvent
+                      return <div><div className="text-[14px] font-medium" style={{ color: colors.textPrimary }}>{event.summary}</div><div className="text-[13px] mt-3" style={{ color: colors.textSecondary }}>{event.start ? formatDate(event.start) : 'No start time'}</div>{event.html_link && <ExternalLinkButton href={event.html_link} label="Open in Imprint browser" mode="browser" />}</div>
+                    }}
+                  />
+                )}
+              </div>
+            </section>
+
+            ) : showOnboarding ? (
               <div
                 className="mt-5 rounded-2xl p-5 shrink-0 max-h-[70vh] overflow-y-auto"
                 style={{ background: colors.surfacePrimary, border: `1px solid ${colors.containerBorder}` }}
@@ -868,21 +832,21 @@ export default function App() {
               </div>
             ) : (
               <div
-                className="mt-5 rounded-2xl p-4 flex items-start gap-3 shrink-0"
+                className="rounded-xl p-5 flex items-start gap-4 min-h-[500px]"
                 style={{ background: colors.surfacePrimary, border: `1px solid ${colors.containerBorder}` }}
               >
                 <div
-                  className="w-10 h-10 rounded-2xl flex items-center justify-center shrink-0"
+                  className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0"
                   style={{ background: colors.accentLight, color: colors.accent }}
                 >
                   <Sparkle size={18} weight="fill" />
                 </div>
                 <div className="flex-1 min-w-0">
-                  <div className="text-[13px] font-medium" style={{ color: colors.textPrimary }}>
+                  <div className="text-[15px] font-medium" style={{ color: colors.textPrimary }}>
                     Ask Imprint
                   </div>
-                  <div className="text-[12px] mt-1 mb-3 leading-6" style={{ color: colors.textSecondary }}>
-                    Describe the task once. Imprint will use your profile, Workspace context, and browser tools automatically when needed.
+                  <div className="text-[13px] mt-1 mb-4 leading-6" style={{ color: colors.textSecondary }}>
+                    Ask a question about the workspace. Imprint uses your profile, Gmail, Classroom, and Calendar context.
                   </div>
                   <div className="flex items-center gap-3">
                     <input
@@ -895,7 +859,7 @@ export default function App() {
                         }
                       }}
                       placeholder="What should I focus on right now?"
-                      className="flex-1 h-12 px-4 rounded-xl text-[13px]"
+                      className="flex-1 h-12 px-4 rounded-lg text-[13px]"
                       style={{
                         background: colors.containerBg,
                         color: colors.textPrimary,
@@ -905,7 +869,7 @@ export default function App() {
                     <button
                       onClick={() => void askAssistant()}
                       disabled={!snapshot || !query.trim() || busy !== 'idle'}
-                      className="h-12 px-4 rounded-xl text-[13px] font-medium"
+                      className="h-12 px-5 rounded-lg text-[13px] font-medium"
                       style={{
                         background: colors.accent,
                         color: colors.textOnAccent,
@@ -914,24 +878,10 @@ export default function App() {
                     >
                       {busy === 'asking' ? 'Asking...' : 'Ask'}
                     </button>
-                    <button
-                      onClick={() => void stopAssistant()}
-                      disabled={busy !== 'asking'}
-                      className="h-12 px-4 rounded-xl text-[13px] font-medium flex items-center gap-2"
-                      style={{
-                        background: colors.statusErrorBg,
-                        color: colors.statusError,
-                        border: `1px solid ${colors.containerBorder}`,
-                        opacity: busy !== 'asking' ? 0.6 : 1,
-                      }}
-                    >
-                      <Square size={12} weight="fill" />
-                      Stop
-                    </button>
                   </div>
                   {agentActivity.length > 0 && (
                     <div
-                      className="mt-3 rounded-xl px-4 py-3 max-h-[120px] overflow-y-auto"
+                    className="mt-4 rounded-lg px-4 py-3 max-h-[120px] overflow-y-auto"
                       style={{ background: colors.surfaceSecondary, border: `1px solid ${colors.containerBorder}` }}
                     >
                       <div className="text-[11px] uppercase tracking-[0.14em] mb-2" style={{ color: colors.textTertiary }}>
@@ -947,7 +897,7 @@ export default function App() {
                     </div>
                   )}
                   <div
-                    className="mt-3 rounded-xl px-4 py-3 max-h-[160px] overflow-y-auto text-[12px] leading-6"
+                    className="mt-4 rounded-lg px-5 py-4 min-h-[360px] max-h-[430px] overflow-y-auto text-[13px] leading-7"
                     style={{
                       background: colors.containerBg,
                       color: assistantAnswer || busy === 'asking' ? colors.textPrimary : colors.textTertiary,
@@ -955,16 +905,18 @@ export default function App() {
                     }}
                   >
                     {assistantAnswer ? (
-                        <div className="prose-cloud conversation-selectable text-[12px] leading-6 [&>*:first-child]:mt-0 [&>*:last-child]:mb-0">
+                        <div className="prose-cloud conversation-selectable text-[13px] leading-7 [&>*:first-child]:mt-0 [&>*:last-child]:mb-0">
                           <Markdown remarkPlugins={[remarkGfm]}>
                             {assistantAnswer}
                           </Markdown>
                         </div>
-                      ) : 'No response yet.'}
+                      ) : <div className="flex h-[320px] items-center justify-center">Your summary will appear here.</div>}
                   </div>
                 </div>
               </div>
             )}
+              </motion.div>
+            </AnimatePresence>
           </main>
         </div>
       </div>
@@ -983,32 +935,6 @@ export default function App() {
       setProfileDraft(EMPTY_PROFILE_DRAFT)
     }
   }
-}
-
-function InfoCard({
-  title,
-  children,
-  action,
-}: {
-  title: string
-  children: React.ReactNode
-  action?: React.ReactNode
-}) {
-  const colors = useColors()
-  return (
-    <div
-      className="rounded-2xl p-4 mb-4"
-      style={{ background: colors.surfacePrimary, border: `1px solid ${colors.containerBorder}` }}
-    >
-      <div className="flex items-center justify-between mb-3">
-        <div className="text-[11px] uppercase tracking-[0.18em]" style={{ color: colors.textTertiary }}>
-          {title}
-        </div>
-        {action}
-      </div>
-      {children}
-    </div>
-  )
 }
 
 function StatusPill({
@@ -1125,7 +1051,7 @@ function DataColumn<T>({
   const colors = useColors()
   return (
     <section
-      className="rounded-[24px] min-h-0 flex flex-col overflow-hidden"
+      className="rounded-xl h-full min-h-0 flex flex-col overflow-hidden"
       style={{ background: colors.surfacePrimary, border: `1px solid ${colors.containerBorder}` }}
     >
       <div className="px-4 py-4 border-b shrink-0" style={{ borderColor: colors.containerBorder }}>
